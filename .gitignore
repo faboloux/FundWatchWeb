@@ -1,0 +1,9 @@
+# 临时 / 系统
+*.log
+.DS_Store
+Thumbs.db
+.gitignore.bak
+
+# 构建中间产物（如重新生成单文件会产生）
+_fw_single.js
+__fw_*.js
