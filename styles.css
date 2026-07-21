@@ -255,11 +255,11 @@ body{
 .view.compact .fcard:not(.pf) .nm{font-size:13.5px;line-height:1.25;max-width:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 简洁模式隐藏代码/类型，详情页再看；名称可获得最大宽度 */
 .view.compact .fcard:not(.pf) .cd{display:none}
-/* 右侧三元素横排并对齐 */
-.view.compact .fcard:not(.pf) .val{display:flex;flex-direction:row;align-items:center;gap:5px;text-align:left;flex-wrap:nowrap}
-.view.compact .fcard:not(.pf) .v{font-size:15px;line-height:1;letter-spacing:0}
-.view.compact .fcard:not(.pf) .chg-pill{font-size:9.5px;padding:2px 5px;border-radius:7px}
-.view.compact .fcard:not(.pf) .state-badge{margin-top:0;padding:2px 5px;font-size:8.5px}
+/* 右侧三元素横排并对齐：固定列宽 + 整体靠右，保证跨卡片数字对齐 */
+.view.compact .fcard:not(.pf) .val{display:flex;flex-direction:row;align-items:center;justify-content:flex-end;gap:6px;flex:0 0 auto;flex-wrap:nowrap;text-align:right}
+.view.compact .fcard:not(.pf) .v{font-size:15px;line-height:1;letter-spacing:0;min-width:64px;text-align:right;font-variant-numeric:tabular-nums}
+.view.compact .fcard:not(.pf) .chg-pill{font-size:9.5px;padding:2px 5px;border-radius:7px;min-width:54px;text-align:center;justify-content:center;font-variant-numeric:tabular-nums;white-space:nowrap}
+.view.compact .fcard:not(.pf) .state-badge{margin-top:0;padding:2px 5px;font-size:8.5px;min-width:48px;text-align:center;white-space:nowrap}
 .view.compact .fcard:not(.pf) .bot{display:none}
 .view.compact .fcard:not(.pf) .grp-tag{display:none}
 .view.compact .fcard:not(.pf) .del{width:18px;height:18px;top:4px;right:4px;font-size:11px;opacity:.4}
