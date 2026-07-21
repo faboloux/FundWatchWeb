@@ -373,12 +373,23 @@
     var d = displayOf(f), c = colorClass(d.chg), h = holdingOf(f);
     var grp = f.group ? '<span class="grp-tag">' + esc(f.group) + '</span>' : '';
     var liveBadge = d.live ? '<span class="live-badge">' + (f.exchangeTraded ? '实时' : '盘中') + '</span>' : '';
+    // 主页卡片主数字优先展示“今日预估收益金额”，无持仓时 fallback 为涨跌幅
+    var mainVal, mainCls, mainLabel;
+    if (h) {
+      mainVal = (h.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(h.profit), 0);
+      mainCls = h.profit >= 0 ? 'up' : 'down';
+      mainLabel = '今日预估收益';
+    } else {
+      mainVal = sign(d.chg) + fmt(d.chg, 2) + '%';
+      mainCls = c;
+      mainLabel = d.label;
+    }
     var hold = h ? '<span class="' + (h.profit >= 0 ? 'up' : 'down') + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(Math.abs(h.profit), 0) + '</span>' : '';
     return '<div class="fcard" data-act="open" data-code="' + f.code + '">' +
       '<button class="del" data-act="del" data-code="' + f.code + '" title="删除">✕</button>' +
       '<div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + (f.exchangeTraded ? ' · 场内' : '') + '</div></div>' +
-      '<div class="val"><div class="v ' + c + '">' + fmt(d.nav) + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div>' + liveBadge + '</div></div>' +
-      '<div class="bot"><span>' + esc(d.label) + '</span>' + hold + '</div>' + grp +
+      '<div class="val"><div class="v ' + mainCls + '">' + mainVal + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div>' + liveBadge + '</div></div>' +
+      '<div class="bot"><span>' + esc(h ? d.label : mainLabel) + '</span>' + (h ? '' : hold) + '</div>' + grp +
       '</div>';
   }
 
