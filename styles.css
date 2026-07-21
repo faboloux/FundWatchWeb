@@ -82,6 +82,13 @@ body{
 .gtab.on{background:linear-gradient(135deg,var(--brand),var(--brand-2));border-color:transparent;color:#fff;box-shadow:0 4px 12px rgba(238,43,59,.30)}
 .gtab.add{flex:0 0 auto;padding:7px 13px;border-radius:999px;border:1px dashed var(--brand);
   background:transparent;color:var(--brand);font-size:13.5px;font-weight:700;cursor:pointer}
+/* 分组标签：两行（名称 + 本范围按估值收益金额） */
+.gtab{flex-direction:column;align-items:center;justify-content:center;gap:2px;line-height:1.18;padding:6px 15px}
+.gtab .gtab-sub{font-size:9.5px;font-weight:800;letter-spacing:.2px}
+.gtab.on .gtab-sub{color:#fff;opacity:.96}
+/* 首页：当前范围收益汇总为空时的占位 */
+.sum-empty{background:var(--chip);color:var(--sub);border-radius:12px;padding:13px 15px;
+  font-size:12px;line-height:1.55;font-weight:500}
 
 /* ============ 基金卡片 ============ */
 .fcard{
