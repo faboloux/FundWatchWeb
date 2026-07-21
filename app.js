@@ -1,10 +1,12 @@
 /* 估值宝 FundWatchWeb —— 纯前端基金净值/估值查看（自用）
  * 数据源（均跨域<script>注入，无 CORS / Referer 限制）：
- *  1) 东方财富 pingzhongdata.js  → 基金名 + 最新确认净值 + 历史净值（画走势）
- *  2) 腾讯 qt.gtimg.cn/q=jj{code}  → 交易日盘中估算净值（date==今天 且开盘时启用）
+ *  1) 东方财富 pingzhongdata.js  → 基金名 + 最新确认净值 + 历史净值（画走势）。所有基金可用。
+ *  2) 腾讯 qt.gtimg.cn/q=<mkt><code> → 场内基金(ETF/LOF)的实时行情（当前价/昨收），
+ *     据此算出盘中实时涨跌幅。交易时段精确可用（这就是场内基金的实时价，非估算）。
  *  3) 东方财富 fundsuggest JSONP    → 搜索添加
- * 说明：盘中实时估值 JSONP（天天基金）2026 年已被官方停用，故本版以“最新确认净值+历史”
- *       为主，并在交易时段尽力叠加盘中估算。估值 ≠ 官方净值。
+ * 说明：场外开放基金的“盘中实时估值”公开接口（天天基金 fundgz）已于 2026 年被官方停用，
+ *       故场外基金只展示最新确认净值+历史；场内基金(ETF/LOF)改用腾讯实时行情显示盘中实时价。
+ *       估值/实时价 ≠ 官方净值，仅供参考，不构成投资建议。
  */
 (function () {
   'use strict';
@@ -26,7 +28,18 @@
   function load() {
     try {
       var r = localStorage.getItem(STORE_KEY);
-      if (r) { var s = JSON.parse(r); if (s && s.funds) { state.funds = s.funds || {}; state.groups = s.groups || []; state.defaultGroup = s.defaultGroup || ''; } }
+      if (r) {
+        var s = JSON.parse(r);
+        if (s && s.funds) {
+          state.funds = s.funds || {}; state.groups = s.groups || []; state.defaultGroup = s.defaultGroup || '';
+          // 兼容旧数据：补齐新字段
+          Object.keys(state.funds).forEach(function (k) {
+            var f = state.funds[k];
+            if (f.exchangeTraded == null) f.exchangeTraded = false;
+            if (f.live == null) f.live = null;
+          });
+        }
+      }
     } catch (e) {}
   }
   function save() {
@@ -44,7 +57,8 @@
     var d = new Date(), day = d.getDay();
     if (day === 0 || day === 6) return false;
     var t = d.getHours() * 60 + d.getMinutes();
-    return t >= 570 && t <= 900; // 9:30–15:00
+    // 上午 9:30–11:30 (570–690) 与 下午 13:00–15:00 (780–900)，跳过午休
+    return (t >= 570 && t <= 690) || (t >= 780 && t <= 900);
   }
   function colorClass(v) { return v > 0 ? 'up' : (v < 0 ? 'down' : 'flat'); }
   function arrow(v) { return v > 0 ? '▲' : (v < 0 ? '▼' : '—'); }
@@ -90,19 +104,32 @@
       });
   }
 
-  function fetchIntraday(code) {
-    return injectScript('https://qt.gtimg.cn/q=jj' + code + '&_=' + Date.now())
+  // 场内/场外识别：用代码段判定（ETF/LOF/封基 占用专用号段 15/16/50/51/58，
+  // 股票不会占用这些号段，因此不存在“基金代码撞股票代码”的误判；比名称匹配更稳）。
+  function mktOf(code) { return /^[56]/.test(code) ? 'sh' : 'sz'; }
+  function isETFPrefix(code) { return /^(15|16|50|51|58)/.test(code || ''); }
+  function detectExchangeTraded(code) {
+    return Promise.resolve(isETFPrefix(code));
+  }
+  // 场内基金实时行情（腾讯，跨域<script>可用，无需 Referer）
+  function fetchLiveETF(code) {
+    var mkt = mktOf(code);
+    return injectScript('https://qt.gtimg.cn/q=' + mkt + code + '&_=' + Date.now())
       .then(function (ok) {
         if (ok !== 'ok') return null;
-        var raw = window['v_jj' + code];
+        var raw = window['v_' + mkt + code];
         if (!raw) return null;
         var f = raw.split('~');
-        var nav = parseFloat(f[5]), chg = parseFloat(f[7]), date = (f[8] || '').trim();
-        if (!isNaN(nav) && date === todayStr() && marketOpen()) {
-          return { nav: nav, chg: chg, time: nowHM() };
+        var price = parseFloat(f[3]), prev = parseFloat(f[4]);
+        if (isNaN(price) || isNaN(prev) || prev <= 0) return null;
+        var chg = (price - prev) / prev * 100;
+        var ts = '';
+        for (var i = f.length - 1; i >= 0; i--) {
+          if (/^\d{14}$/.test(f[i] || '')) { var s = f[i] + ''; ts = s.slice(8, 10) + ':' + s.slice(10, 12); break; }
         }
-        return null;
-      });
+        return { price: price, chg: chg, time: ts || nowHM(), name: f[1] };
+      })
+      .catch(function () { return null; });
   }
 
   function searchFunds(kw) {
@@ -128,10 +155,11 @@
 
   // ---------------- 派生值 ----------------
   function displayOf(f) {
-    if (f.intraday && marketOpen()) {
-      return { nav: f.intraday.nav, chg: f.intraday.chg, label: '盘中估算 ' + f.intraday.time, intraday: true };
+    // 场内基金且处于交易时段：返回腾讯实时价（精确，非估算）
+    if (f.exchangeTraded && f.live && marketOpen()) {
+      return { nav: f.live.price, chg: f.live.chg, label: '盘中实时 ' + f.live.time, intraday: true, live: true };
     }
-    return { nav: f.lastNav, chg: f.lastChg, label: f.lastDate ? ('最新净值 ' + f.lastDate) : '暂无净值', intraday: false };
+    return { nav: f.lastNav, chg: f.lastChg, label: f.lastDate ? ('最新净值 ' + f.lastDate) : '暂无净值', intraday: false, live: false };
   }
   function holdingOf(f) {
     if (!(f.shares > 0)) return null;
@@ -145,13 +173,17 @@
   function refreshOne(code) {
     var f = state.funds[code]; if (!f) return Promise.resolve();
     return fetchPingzhong(code).then(function (pd) {
-      return fetchIntraday(code).then(function (intra) {
-        var f2 = state.funds[code]; if (!f2) return;
-        if (pd) {
-          if (pd.name) f2.name = pd.name;
-          f2.lastNav = pd.nav; f2.lastChg = pd.chg; f2.lastDate = pd.date; f2.history = pd.history;
-        }
-        f2.intraday = intra; f2.updatedAt = Date.now(); save();
+      var f2 = state.funds[code]; if (!f2) return;
+      if (pd) {
+        if (pd.name) f2.name = pd.name;
+        f2.lastNav = pd.nav; f2.lastChg = pd.chg; f2.lastDate = pd.date; f2.history = pd.history;
+      }
+      var liveP = f2.exchangeTraded ? fetchLiveETF(code) : Promise.resolve(null);
+      return liveP.then(function (live) {
+        var f3 = state.funds[code]; if (!f3) return;
+        // 仅交易时段保留实时价；非交易时段回落到最新净值
+        f3.live = (live && marketOpen()) ? live : null;
+        f3.updatedAt = Date.now(); save();
         if (ui.view === 'home' || ui.view === 'detail' || ui.view === 'portfolio') render();
       });
     }).catch(function () {});
@@ -210,7 +242,7 @@
     });
     html += '<button class="gtab add" data-act="newGroup">＋分组</button>';
     html += '</div>';
-    html += '<div class="info-note">估值 ≠ 官方净值 · 交易时段自动叠加盘中估算（点右上角“数据说明”查看）</div>';
+    html += '<div class="info-note">场外基金显示最新净值 · 场内基金(ETF/LOF)显示盘中实时价（点右上角“i”查看数据说明）</div>';
 
     var list = visibleFunds();
     if (ui.wide) {
@@ -229,11 +261,12 @@
   function cardHTML(f) {
     var d = displayOf(f), c = colorClass(d.chg), h = holdingOf(f);
     var grp = f.group ? '<span class="grp-tag">' + esc(f.group) + '</span>' : '';
+    var liveBadge = d.live ? '<span class="live-badge">实时</span>' : '';
     var hold = h ? '<span class="' + (h.profit >= 0 ? 'up' : 'down') + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(Math.abs(h.profit), 0) + '</span>' : '';
     return '<div class="fcard" data-act="open" data-code="' + f.code + '">' +
       '<button class="del" data-act="del" data-code="' + f.code + '" title="删除">✕</button>' +
-      '<div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + '</div></div>' +
-      '<div class="val"><div class="v ' + c + '">' + fmt(d.nav) + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div></div></div>' +
+      '<div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + (f.exchangeTraded ? ' · 场内' : '') + '</div></div>' +
+      '<div class="val"><div class="v ' + c + '">' + fmt(d.nav) + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div>' + liveBadge + '</div></div>' +
       '<div class="bot"><span>' + esc(d.label) + '</span>' + hold + '</div>' + grp +
       '</div>';
   }
@@ -265,6 +298,7 @@
     html += '<button class="icon-btn" data-act="back" style="background:transparent">✕</button></div>';
     html += '<div class="detail-big ' + c + '">' + fmt(nav) + '</div><div class="detail-ch"><span class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</span> <span style="font-size:12.5px;color:var(--sub);font-weight:600">' + esc(d.label) + '</span></div>';
     html += spark;
+    html += '<label class="et-toggle"><input type="checkbox" id="chkET" data-code="' + f.code + '" ' + (f.exchangeTraded ? 'checked' : '') + '/> 场内基金（ETF / LOF，显示盘中实时价）</label>';
     html += '<div>';
     html += kv('净值日期', f.lastDate || '—');
     html += kv('当前市值', h ? ('¥' + fmt(h.marketValue, 2)) : '未设置持仓');
@@ -362,13 +396,20 @@
   function addFund(code) {
     if (state.funds[code]) return;
     var r = ui.searchResults.filter(function (x) { return x.code === code; })[0] || { code: code, name: '', type: '' };
-    state.funds[code] = {
-      code: code, name: r.name || code, type: r.type || '',
-      group: ui.searchTargets[code] || '', shares: 0, costPrice: 0,
-      history: [], lastNav: null, lastChg: 0, lastDate: '', intraday: null, updatedAt: 0
-    };
-    save(); render(); toast('已添加 ' + (r.name || code));
-    refreshOne(code);
+    var name = r.name || code;
+    toast('正在添加…');
+    detectExchangeTraded(code).then(function (isET) {
+      if (state.funds[code]) return; // 重复点击防护
+      state.funds[code] = {
+        code: code, name: name, type: r.type || '',
+        exchangeTraded: !!isET,
+        group: ui.searchTargets[code] || '', shares: 0, costPrice: 0,
+        history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, updatedAt: 0
+      };
+      save(); render();
+      toast((isET ? '已识别为场内(实时) · ' : '') + '已添加 ' + name);
+      refreshOne(code);
+    });
   }
   function deleteFund(code) {
     delete state.funds[code];
@@ -438,9 +479,10 @@
     root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
   }
   function openInfo() {
-    infoModal('<p>数据来自东方财富与腾讯的公开接口（跨域脚本注入获取，无需后端）。</p>' +
-      '<p>盘中实时估值的老接口已于 2026 年停用，本版展示<b>最新确认净值 + 历史走势</b>；若你的网络在交易时段（9:30–15:00）能取到盘中估算，会自动叠加。</p>' +
-      '<p>估值 ≠ 官方净值，仅供参考，不构成投资建议。</p>');
+    infoModal('<p>数据来自东方财富与腾讯的公开接口（跨域脚本注入获取，无需后端、无账号）。</p>' +
+      '<p><b>场外开放基金</b>：天天基金“盘中实时估值”公开接口已于 2026 年被官方停用，故只展示<b>最新确认净值 + 历史走势</b>。</p>' +
+      '<p><b>场内基金（ETF / LOF）</b>：改用腾讯实时行情，展示<b>盘中实时价</b>（即实时市价，比旧估算更准）。添加时会自动识别；也可在详情页手动开关“场内基金”。</p>' +
+      '<p>实时价 / 净值 ≠ 官方净值，仅供参考，不构成投资建议。</p>');
   }
   var toastTimer = null;
   function toast(msg) {
@@ -481,7 +523,12 @@
     if (e.target.classList.contains('grp-sel')) { ui.searchTargets[e.target.dataset.code] = e.target.value; return; }
   }
   function onChange(e) {
-    if (e.target.id === 'selGroup') { moveGroup(e.target.dataset.code, e.target.value); }
+    if (e.target.id === 'selGroup') { moveGroup(e.target.dataset.code, e.target.value); return; }
+    if (e.target.id === 'chkET') {
+      var f = state.funds[e.target.dataset.code]; if (!f) return;
+      f.exchangeTraded = e.target.checked; save(); render();
+      if (e.target.checked) refreshOne(e.target.dataset.code);
+    }
   }
 
   // ---------------- 宽屏检测 ----------------
