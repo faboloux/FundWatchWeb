@@ -97,6 +97,13 @@ body{
 .fcard .val{text-align:right;flex:0 0 auto}
 .fcard .v{font-size:22px;font-weight:800;letter-spacing:.3px;font-variant-numeric:tabular-nums}
 .fcard .ch{margin-top:5px}
+.live-badge{display:inline-block;margin-top:5px;font-size:10.5px;font-weight:800;color:#fff;
+  background:linear-gradient(135deg,#0CA678,#19C37D);padding:2px 8px;border-radius:999px;letter-spacing:.5px;
+  box-shadow:0 2px 6px rgba(12,166,120,.35)}
+/* 详情页：场内基金开关 */
+.et-toggle{display:flex;align-items:center;gap:9px;background:var(--chip);border-radius:12px;
+  padding:11px 13px;margin-top:11px;font-size:13px;font-weight:600;color:var(--txt);cursor:pointer}
+.et-toggle input{width:18px;height:18px;accent-color:var(--brand);flex:0 0 auto}
 .fcard .bot{display:flex;justify-content:space-between;align-items:center;margin-top:11px;font-size:12px;color:var(--sub)}
 .fcard .grp-tag{display:inline-block;margin-top:9px;font-size:11px;font-weight:700;color:var(--brand);
   background:var(--tint-up);padding:3px 10px;border-radius:999px}
