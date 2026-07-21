@@ -108,6 +108,11 @@ body{
 .live-badge{display:inline-block;margin-top:5px;font-size:10.5px;font-weight:800;color:#fff;
   background:linear-gradient(135deg,#0CA678,#19C37D);padding:2px 8px;border-radius:999px;letter-spacing:.5px;
   box-shadow:0 2px 6px rgba(12,166,120,.35)}
+/* 详情页：盘中估值注记（新浪） */
+.est-note{margin-top:9px;font-size:12.5px;font-weight:700;color:#0CA678;
+  background:rgba(12,166,120,.10);border-radius:10px;padding:8px 11px;line-height:1.5}
+.est-alt{margin-top:6px;font-size:11.5px;font-weight:600;color:var(--sub);
+  background:var(--chip);border-radius:8px;padding:6px 10px}
 /* 详情页：场内基金开关 */
 .et-toggle{display:flex;align-items:center;gap:9px;background:var(--chip);border-radius:12px;
   padding:11px 13px;margin-top:11px;font-size:13px;font-weight:600;color:var(--txt);cursor:pointer}
@@ -272,13 +277,14 @@ body{
   <div id="modalRoot"></div>
   <script>
 /* 估值宝 FundWatchWeb —— 纯前端基金净值/估值查看（自用）
- * 数据源（均跨域<script>注入，无 CORS / Referer 限制）：
- *  1) 东方财富 pingzhongdata.js  → 基金名 + 最新确认净值 + 历史净值（画走势）。所有基金可用。
- *  2) 腾讯 qt.gtimg.cn/q=<mkt><code> → 场内基金(ETF/LOF)的实时行情（当前价/昨收），
+ * 数据源（均跨域<script>/JSONP 注入，无 CORS / Referer 限制，纯前端无后端）：
+ *  1) 东方财富 pingzhongdata.js       → 基金名 + 最新确认净值 + 历史净值（画走势）。所有基金可用。
+ *  2) 腾讯 qt.gtimg.cn/q=<mkt><code>  → 场内基金(ETF/LOF)的实时行情（当前价/昨收），
  *     据此算出盘中实时涨跌幅。交易时段精确可用（这就是场内基金的实时价，非估算）。
- *  3) 东方财富 fundsuggest JSONP    → 搜索添加
- * 说明：场外开放基金的“盘中实时估值”公开接口（天天基金 fundgz）已于 2026 年被官方停用，
- *       故场外基金只展示最新确认净值+历史；场内基金(ETF/LOF)改用腾讯实时行情显示盘中实时价。
+ *  3) 新浪 FdFundService 估值曲线(JSONP) → 场外开放基金的【盘中实时估值】（实测 2026-07 仍可用，
+ *     返回含今日时间戳的逐分钟估算净值序列）。这是“输任意基金代码看盘中估值”的来源。
+ *  4) 东方财富 fundsuggest JSONP        → 搜索添加
+ * 说明：天天基金 fundgz 盘中估值接口已于 2026 年被官方停用（301 死）；本版改用新浪估值曲线覆盖场外基金。
  *       估值/实时价 ≠ 官方净值，仅供参考，不构成投资建议。
  */
 (function () {
@@ -310,6 +316,7 @@ body{
             var f = state.funds[k];
             if (f.exchangeTraded == null) f.exchangeTraded = false;
             if (f.live == null) f.live = null;
+            if (f.estimate == null) f.estimate = null;
           });
         }
       }
@@ -405,6 +412,55 @@ body{
       .catch(function () { return null; });
   }
 
+  // 新浪盘中估值曲线（JSONP 跨域，无需 Referer / CORS）。
+  // 端点：stock.finance.sina.com.cn/fundInfo/api/openapi.php/FdFundService.getEstimateNetworthPic?symbol={code}
+  // 返回 result.data：worth/ worth_date/ worth_rate = 最新确认净值；
+  //        networth[] = 今日逐分钟估算序列（pre_date 为今日时即盘中实时估值）。
+  function fetchSinaEstimate(code) {
+    return new Promise(function (resolve) {
+      var cb = 'fw_sina_' + code + '_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+      var s = document.createElement('script');
+      var done = false;
+      function fin(v) { if (done) return; done = true; try { delete window[cb]; } catch (e) {} if (s.parentNode) s.parentNode.removeChild(s); resolve(v); }
+      window[cb] = function (res) { fin(parseSinaEstimate(res)); };
+      s.onerror = function () { fin(null); };
+      s.src = 'https://stock.finance.sina.com.cn/fundInfo/api/openapi.php/FdFundService.getEstimateNetworthPic?symbol=' + code + '&callback=' + cb;
+      s.async = true;
+      document.body.appendChild(s);
+      setTimeout(function () { fin(null); }, 10000);
+    });
+  }
+  function parseSinaEstimate(res) {
+    try {
+      var data = res && res.result && res.result.data;
+      if (!data) return null;
+      var out = { nav: null, date: '', chg: 0, estimate: null };
+      if (data.worth != null && data.worth !== '') {
+        out.nav = parseFloat(data.worth);
+        out.date = '' + (data.worth_date || '');                 // 如 20260720
+        out.chg = (data.worth_rate != null && isFinite(Number(data.worth_rate))) ? Number(data.worth_rate) * 100 : 0;
+      }
+      var nw = data.networth;
+      if (Array.isArray(nw) && nw.length) {
+        var last = nw[nw.length - 1];
+        var pd = ('' + (last.pre_date || '')).trim();
+        var nav = parseFloat(last.pre_nav);      // 口径2 估算净值
+        var pct = parseFloat(last.nav_pct);    // 口径2 估算涨跌幅%
+        var nav2 = parseFloat(last.pre_nav2);   // 口径3 估算净值
+        var pct2 = parseFloat(last.nav2_pct);   // 口径3 估算涨跌幅%
+        var tm = ('' + (last.min_time || '')).slice(0, 5);
+        if (Number.isFinite(nav) && pd === todayStr() && marketOpen()) {
+          out.estimate = {
+            nav: nav, chg: Number.isFinite(pct) ? pct : 0, time: tm || nowHM(),
+            nav2: Number.isFinite(nav2) ? nav2 : null,
+            chg2: Number.isFinite(pct2) ? pct2 : null
+          };
+        }
+      }
+      return out;
+    } catch (e) { return null; }
+  }
+
   function searchFunds(kw) {
     var cb = 'fw_s_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
     var p = new Promise(function (resolve) {
@@ -432,6 +488,10 @@ body{
     if (f.exchangeTraded && f.live && marketOpen()) {
       return { nav: f.live.price, chg: f.live.chg, label: '盘中实时 ' + f.live.time, intraday: true, live: true };
     }
+    // 场外开放基金且处于交易时段：返回新浪盘中实时估值
+    if (f.estimate && marketOpen()) {
+      return { nav: f.estimate.nav, chg: f.estimate.chg, label: '盘中估值 ' + f.estimate.time, intraday: true, live: true };
+    }
     return { nav: f.lastNav, chg: f.lastChg, label: f.lastDate ? ('最新净值 ' + f.lastDate) : '暂无净值', intraday: false, live: false };
   }
   function holdingOf(f) {
@@ -445,17 +505,25 @@ body{
   // ---------------- 刷新 ----------------
   function refreshOne(code) {
     var f = state.funds[code]; if (!f) return Promise.resolve();
-    return fetchPingzhong(code).then(function (pd) {
+    // 场内：腾讯实时价；场外：新浪盘中估值（JSONP）。两者并行取。
+    var pPing = fetchPingzhong(code);
+    var pSina = f.exchangeTraded ? Promise.resolve(null) : fetchSinaEstimate(code);
+    return Promise.all([pPing, pSina]).then(function (rs) {
       var f2 = state.funds[code]; if (!f2) return;
+      var pd = rs[0], sn = rs[1];
       if (pd) {
         if (pd.name) f2.name = pd.name;
         f2.lastNav = pd.nav; f2.lastChg = pd.chg; f2.lastDate = pd.date; f2.history = pd.history;
+      } else if (sn && sn.nav != null) {
+        // pingzhongdata 失败时，用新浪确认净值兜底
+        f2.lastNav = sn.nav; f2.lastChg = sn.chg; f2.lastDate = sn.date;
       }
       var liveP = f2.exchangeTraded ? fetchLiveETF(code) : Promise.resolve(null);
       return liveP.then(function (live) {
         var f3 = state.funds[code]; if (!f3) return;
-        // 仅交易时段保留实时价；非交易时段回落到最新净值
+        // 仅交易时段保留实时价/盘中估值；非交易时段回落到最新净值
         f3.live = (live && marketOpen()) ? live : null;
+        f3.estimate = (sn && sn.estimate && marketOpen()) ? sn.estimate : null;
         f3.updatedAt = Date.now(); save();
         if (ui.view === 'home' || ui.view === 'detail' || ui.view === 'portfolio') render();
       });
@@ -515,7 +583,7 @@ body{
     });
     html += '<button class="gtab add" data-act="newGroup">＋分组</button>';
     html += '</div>';
-    html += '<div class="info-note">场外基金显示最新净值 · 场内基金(ETF/LOF)显示盘中实时价（点右上角“i”查看数据说明）</div>';
+    html += '<div class="info-note">场外基金盘中显示新浪实时估值 · 场内基金(ETF/LOF)显示腾讯实时价（点右上角“i”查看数据说明）</div>';
 
     var list = visibleFunds();
     if (ui.wide) {
@@ -534,7 +602,7 @@ body{
   function cardHTML(f) {
     var d = displayOf(f), c = colorClass(d.chg), h = holdingOf(f);
     var grp = f.group ? '<span class="grp-tag">' + esc(f.group) + '</span>' : '';
-    var liveBadge = d.live ? '<span class="live-badge">实时</span>' : '';
+    var liveBadge = d.live ? '<span class="live-badge">' + (f.exchangeTraded ? '实时' : '盘中') + '</span>' : '';
     var hold = h ? '<span class="' + (h.profit >= 0 ? 'up' : 'down') + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(Math.abs(h.profit), 0) + '</span>' : '';
     return '<div class="fcard" data-act="open" data-code="' + f.code + '">' +
       '<button class="del" data-act="del" data-code="' + f.code + '" title="删除">✕</button>' +
@@ -570,6 +638,13 @@ body{
     html += '<div class="detail-head"><div><div style="font-weight:700;font-size:16px">' + esc(f.name || f.code) + '</div><div style="font-size:12px;color:var(--sub)">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + '</div></div>';
     html += '<button class="icon-btn" data-act="back" style="background:transparent">✕</button></div>';
     html += '<div class="detail-big ' + c + '">' + fmt(nav) + '</div><div class="detail-ch"><span class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</span> <span style="font-size:12.5px;color:var(--sub);font-weight:600">' + esc(d.label) + '</span></div>';
+    if (f.estimate && marketOpen()) {
+      var e = f.estimate;
+      html += '<div class="est-note">盘中估值（新浪）：' + fmt(e.nav) + ' · ' + arrow(e.chg) + ' ' + sign(e.chg) + fmt(e.chg, 2) + '% @ ' + esc(e.time) + '</div>';
+      if (e.chg2 != null && Math.abs(e.chg2 - e.chg) > 0.3) {
+        html += '<div class="est-alt">另一口径：' + fmt(e.nav2) + ' · ' + fmt(e.chg2, 2) + '%</div>';
+      }
+    }
     html += spark;
     html += '<label class="et-toggle"><input type="checkbox" id="chkET" data-code="' + f.code + '" ' + (f.exchangeTraded ? 'checked' : '') + '/> 场内基金（ETF / LOF，显示盘中实时价）</label>';
     html += '<div>';
@@ -677,7 +752,7 @@ body{
         code: code, name: name, type: r.type || '',
         exchangeTraded: !!isET,
         group: ui.searchTargets[code] || '', shares: 0, costPrice: 0,
-        history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, updatedAt: 0
+        history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, estimate: null, updatedAt: 0
       };
       save(); render();
       toast((isET ? '已识别为场内(实时) · ' : '') + '已添加 ' + name);
@@ -752,10 +827,10 @@ body{
     root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
   }
   function openInfo() {
-    infoModal('<p>数据来自东方财富与腾讯的公开接口（跨域脚本注入获取，无需后端、无账号）。</p>' +
-      '<p><b>场外开放基金</b>：天天基金“盘中实时估值”公开接口已于 2026 年被官方停用，故只展示<b>最新确认净值 + 历史走势</b>。</p>' +
-      '<p><b>场内基金（ETF / LOF）</b>：改用腾讯实时行情，展示<b>盘中实时价</b>（即实时市价，比旧估算更准）。添加时会自动识别；也可在详情页手动开关“场内基金”。</p>' +
-      '<p>实时价 / 净值 ≠ 官方净值，仅供参考，不构成投资建议。</p>');
+    infoModal('<p>数据来自东方财富、腾讯、新浪的公开接口（跨域脚本/JSONP 注入获取，纯前端、无后端、无账号）。</p>' +
+      '<p><b>场外开放基金</b>：用<b>新浪盘中估值曲线</b>展示交易时段的<b>实时估值</b>（逐分钟更新，带今日时间戳）；非交易时段回落到最新确认净值 + 历史走势。天天基金 fundgz 接口已于 2026 年停用，已由新浪替代。</p>' +
+      '<p><b>场内基金（ETF / LOF）</b>：用腾讯实时行情展示<b>盘中实时价</b>（即实时市价，比估算更准）。添加时按代码段自动识别；也可在详情页手动开关“场内基金”。</p>' +
+      '<p>新浪估值有两个口径，差异较大时详情页会并列提示。实时价 / 估值 ≠ 官方净值，仅供参考，不构成投资建议。</p>');
   }
   var toastTimer = null;
   function toast(msg) {
