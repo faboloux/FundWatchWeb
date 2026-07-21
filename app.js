@@ -39,11 +39,15 @@
           // 兼容旧数据：补齐新字段
           Object.keys(state.funds).forEach(function (k) {
             var f = state.funds[k];
-            if (f.exchangeTraded == null) f.exchangeTraded = false;
-          // 本应用仅支持场外基金，强制按场外处理（重置历史遗留的场内标记）
-          f.exchangeTraded = false;
+            // 本应用仅支持场外基金，强制按场外处理（重置历史遗留的场内标记）
+            f.exchangeTraded = false;
             if (f.live == null) f.live = null;
             if (f.estimate == null) f.estimate = null;
+            // 迁移单分组持仓 → holdings 数组（同一基金可挂多个分组，各自独立份额/成本）
+            if (!Array.isArray(f.holdings)) {
+              f.holdings = [{ group: f.group || '', shares: f.shares || 0, costPrice: f.costPrice || 0 }];
+              delete f.group; delete f.shares; delete f.costPrice;
+            }
           });
         }
       }
@@ -223,12 +227,87 @@
     }
     return { nav: f.lastNav, chg: f.lastChg, chgToday: null, label: f.lastDate ? ('最新净值 ' + f.lastDate) : '暂无净值', real: false, estimate: false, live: false, navUpdated: false, latestNav: false };
   }
-  function holdingOf(f) {
-    if (!(f.shares > 0)) return null;
+  // ---------------- 持仓（holdings）辅助 ----------------
+  // 一个基金可挂多个分组，每个 holding 独立 份额/成本。
+  function holdingsOf(f) { return Array.isArray(f.holdings) ? f.holdings : []; }
+  function holdingIn(f, g) {
+    g = g || '';
+    var hs = holdingsOf(f);
+    for (var i = 0; i < hs.length; i++) if ((hs[i].group || '') === g) return hs[i];
+    return null;
+  }
+  function upsertHolding(f, group, shares, cost) {
+    group = group || '';
+    var hs = holdingsOf(f), ex = null;
+    for (var i = 0; i < hs.length; i++) if ((hs[i].group || '') === group) { ex = hs[i]; break; }
+    if (ex) {
+      if (!isNaN(shares)) ex.shares = shares;
+      if (!isNaN(cost)) ex.costPrice = cost;
+    } else {
+      hs.push({ group: group, shares: isNaN(shares) ? 0 : shares, costPrice: isNaN(cost) ? 0 : cost });
+    }
+  }
+  function removeHolding(f, group) {
+    group = group || '';
+    f.holdings = holdingsOf(f).filter(function (h) { return (h.group || '') !== group; });
+  }
+  // 展开所有持仓为 position 列表：{code, f, h}
+  function allPositions() {
+    var out = [];
+    Object.keys(state.funds).forEach(function (code) {
+      var f = state.funds[code];
+      holdingsOf(f).forEach(function (h) { out.push({ code: code, f: f, h: h }); });
+    });
+    return out;
+  }
+  // 单 holding 的派生值（基于该基金当前净值口径）
+  function holdingDerived(f, h) {
+    if (!h || !(h.shares > 0)) return null;
     var d = displayOf(f);
-    var nav = d.nav || 0, cost = f.costPrice || 0;
-    var mv = nav * f.shares, profit = (nav - cost) * f.shares, pct = cost > 0 ? (nav - cost) / cost * 100 : 0;
-    return { shares: f.shares, cost: cost, marketValue: mv, profit: profit, profitPct: pct };
+    var nav = d.nav || 0, cost = h.costPrice || 0;
+    var mv = nav * h.shares, profit = (nav - cost) * h.shares, pct = cost > 0 ? (nav - cost) / cost * 100 : 0;
+    return { shares: h.shares, cost: cost, marketValue: mv, profit: profit, profitPct: pct, group: h.group || '' };
+  }
+  // 多 holding 聚合成卡片数据：总份额/总市值/总成本/总收益/今日收益
+  function aggregate(f, hs) {
+    var d = displayOf(f);
+    var totalShares = 0, totalMV = 0, totalCost = 0, totalProfit = 0;
+    var today = 0, todayPrev = 0, hasToday = false;
+    (hs || []).forEach(function (h) {
+      if (!(h.shares > 0)) return;
+      var nav = d.nav || 0, cost = h.costPrice || 0;
+      totalShares += h.shares; totalMV += nav * h.shares; totalCost += cost * h.shares; totalProfit += (nav - cost) * h.shares;
+      if (d.chgToday != null) {
+        var mv = nav * h.shares;
+        today += mv * (d.chgToday / 100);
+        todayPrev += mv / (1 + d.chgToday / 100);
+        hasToday = true;
+      }
+    });
+    return {
+      totalShares: totalShares, totalMV: totalMV, totalCost: totalCost, totalProfit: totalProfit,
+      totalProfitPct: totalCost > 0 ? totalProfit / totalCost * 100 : 0,
+      today: hasToday ? today : null, todayPct: (hasToday && todayPrev > 0) ? today / todayPrev * 100 : 0
+    };
+  }
+  // 单 holding 今日收益（份额 × 当前市值 × 今日涨跌幅%）
+  function todayProfitOf(f, h) {
+    if (!h || !(h.shares > 0)) return null;
+    var hv = holdingDerived(f, h); if (!hv) return null;
+    var d = displayOf(f);
+    if (d.chgToday == null) return null;
+    return hv.marketValue * (d.chgToday / 100);
+  }
+  // 汇总卡片列表的“今日收益”（真实净值 or 收盘估值）
+  function sumToday(cards) {
+    var profit = 0, mv = 0, prevMv = 0, count = 0;
+    (cards || []).forEach(function (card) {
+      var agg = aggregate(card.f, card.hs);
+      if (agg.today != null) {
+        profit += agg.today; mv += agg.totalMV; prevMv += agg.totalMV / (1 + agg.todayPct / 100); count++;
+      }
+    });
+    return { profit: profit, mv: mv, prevMv: prevMv, count: count };
   }
 
   // 当前估值口径（用于首页/收益汇总标签）
@@ -236,45 +315,6 @@
     if (marketOpen()) return '盘中实时';
     var anyReal = Object.keys(state.funds).some(function (k) { return state.funds[k].lastDate === todayStr(); });
     return anyReal ? '今日真实净值' : '收盘估值(预估)';
-  }
-  // 汇总某范围内持仓基金的“按当前估值”收益（holdingOf 已用 displayOf 当前估值）
-  function sumHold(codes) {
-    var profit = 0, mv = 0, cost = 0, count = 0;
-    codes.forEach(function (code) {
-      var f = state.funds[code]; if (!f || !(f.shares > 0)) return;
-      var h = holdingOf(f); if (!h) return;
-      profit += h.profit; mv += h.marketValue; cost += h.cost; count++;
-    });
-    return { profit: profit, mv: mv, cost: cost, count: count };
-  }
-  // 单只基金的“今日收益”：份额 × 当前价值 × (今日涨跌幅%/100)
-  // 用 displayOf 的 chgToday（今日口径：真实净值 or 估值 or 收盘价）；无法判定今日时返回 null
-  function todayProfitOf(f) {
-    if (!(f.shares > 0)) return null;
-    var h = holdingOf(f); if (!h) return null;
-    var d = displayOf(f);
-    if (d.chgToday == null) return null;
-    return h.marketValue * (d.chgToday / 100);
-  }
-  // 汇总某范围「截止当前口径的今日收益」（真实净值 or 收盘估值）
-  function sumToday(codes) {
-    var profit = 0, mv = 0, prevMv = 0, count = 0;
-    codes.forEach(function (code) {
-      var f = state.funds[code]; if (!f || !(f.shares > 0)) return;
-      var h = holdingOf(f); if (!h) return;
-      var d = displayOf(f), ch = d.chgToday == null ? 0 : d.chgToday;
-      var tp = h.marketValue * (ch / 100);
-      profit += tp; mv += h.marketValue;
-      prevMv += h.marketValue / (1 + ch / 100);
-      count++;
-    });
-    return { profit: profit, mv: mv, prevMv: prevMv, count: count };
-  }
-  // 当前筛选范围下的基金代码（“全部”=所有；“分组”=该组）
-  function scopeCodes() {
-    var all = Object.keys(state.funds);
-    if (ui.filter === '全部') return all;
-    return all.filter(function (k) { return (state.funds[k].group || '') === ui.filter; });
   }
 
   // ---------------- 刷新 ----------------
@@ -335,18 +375,26 @@
     view.classList.toggle('compact', ui.compact && (ui.view === 'home' || ui.view === 'portfolio'));
   }
 
+  // 渲染列表：返回“卡片对象”数组 [{f, hs}]
+  // 全部：按基金聚合所有分组持仓（一张卡）；分组：只取该组持仓
   function visibleFunds() {
-    var all = Object.keys(state.funds).map(function (k) { return state.funds[k]; });
-    if (ui.filter === '全部') return all;
-    return all.filter(function (f) { return (f.group || '') === ui.filter; });
+    if (ui.filter === '全部') {
+      var map = {};
+      allPositions().forEach(function (p) {
+        if (!(p.h.shares > 0) && !(p.h.costPrice > 0)) return;
+        (map[p.code] = map[p.code] || { f: p.f, hs: [] }).hs.push(p.h);
+      });
+      return Object.keys(map).map(function (c) { return map[c]; });
+    }
+    return allPositions()
+      .filter(function (p) { return (p.h.group || '') === ui.filter && ((p.h.shares > 0) || (p.h.costPrice > 0)); })
+      .map(function (p) { return { f: p.f, hs: [p.h] }; });
   }
 
   // 排序指标：历史累计收益(hold) + 今日预估收益(today)；无持仓按 0 计
-  function sortMetrics(f) {
-    var h = holdingOf(f);
-    var hold = h ? h.profit : 0;
-    var today = todayProfitOf(f) || 0;
-    return { hold: hold, today: today };
+  function sortMetrics(card) {
+    var agg = aggregate(card.f, card.hs);
+    return { hold: agg.totalProfit, today: agg.today || 0 };
   }
   function sortFunds(list) {
     var s = ui.sort || 'hold_desc';
@@ -399,7 +447,7 @@
     html += '<div class="info-note">首页主数字：交易时段=<b>盘中实时估值</b> · 收盘后至净值更新前=<b>15:00 收盘预估</b> · <b>净值更新后显示真实收益</b>（徽标区分 实时/盘中/收盘预估/真实净值）</div>';
 
     // 当前范围「截止当前口径的今日收益」（真实净值 or 收盘估值）
-    var sc = scopeCodes();
+    var sc = visibleFunds();
     var sum = sumToday(sc);
     var scopeLabel = ui.filter === '全部' ? '全部今日收益' : ('「' + ui.filter + '」今日收益');
     var vlabel = currentValLabel();
@@ -418,11 +466,11 @@
     var list = sortFunds(visibleFunds());
     if (ui.wide) {
       html += '<div class="home-grid">';
-      html += '<div class="pane-list">' + (list.length ? list.map(cardHTML).join('') : emptyMini()) + '</div>';
+      html += '<div class="pane-list">' + (list.length ? list.map(function (card) { return cardHTML(card.f, card.hs); }).join('') : emptyMini()) + '</div>';
       html += '<div class="pane-detail">' + detailInner(ui.selectedCode && state.funds[ui.selectedCode] ? ui.selectedCode : null) + '</div>';
       html += '</div>';
     } else {
-      html += list.length ? list.map(cardHTML).join('') : '<div class="empty"><div class="big">📭</div>还没有基金<br>点右下角 “＋” 添加，或去“收益”页</div>';
+      html += list.length ? list.map(function (card) { return cardHTML(card.f, card.hs); }).join('') : '<div class="empty"><div class="big">📭</div>还没有基金<br>点右下角 “＋” 添加，或去“收益”页</div>';
     }
     view.innerHTML = html;
   }
@@ -438,24 +486,25 @@
     return null;
   }
 
-  function cardHTML(f) {
-    var d = displayOf(f), c = colorClass(d.chg), h = holdingOf(f);
-    var grp = f.group ? '<span class="grp-tag">' + esc(f.group) + '</span>' : '';
+  function cardHTML(f, hs) {
+    var d = displayOf(f), c = colorClass(d.chg);
+    var agg = aggregate(f, hs || []);
+    // 分组标签：多分组显示“N个分组”，单分组显示组名
+    var grp = '';
+    if ((hs || []).length > 1) grp = '<span class="grp-tag">' + (hs.length) + '个分组</span>';
+    else if ((hs || []).length === 1 && (hs[0].group || '')) grp = '<span class="grp-tag">' + esc(hs[0].group) + '</span>';
     var sb = stateBadge(d);
     var badge = sb ? '<span class="state-badge ' + sb.c + '">' + sb.t + '</span>' : '';
-    // 主页卡片主数字：有持仓且能算“今日”口径 → 今日收益；否则 fallback 涨跌幅
+    // 主数字：今日口径 → 今日收益；有持仓 → 累计收益；否则 → 涨跌幅%
     var mainVal, mainCls, mainLabel;
-    if (h) {
-      var tp = todayProfitOf(f);
-      if (tp != null) {
-        mainVal = (tp >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(tp), 0);
-        mainCls = tp >= 0 ? 'up' : 'down';
-        mainLabel = d.real ? '今日收益（真实）' : (d.latestNav ? '最新净值收益' : (d.live ? '今日预估（盘中）' : '今日预估（收盘）'));
-      } else {
-        mainVal = sign(d.chg) + fmt(d.chg, 2) + '%';
-        mainCls = c;
-        mainLabel = d.label;
-      }
+    if (agg.today != null) {
+      mainVal = (agg.today >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(agg.today), 0);
+      mainCls = agg.today >= 0 ? 'up' : 'down';
+      mainLabel = d.real ? '今日收益（真实）' : (d.latestNav ? '最新净值收益' : (d.live ? '今日预估（盘中）' : '今日预估（收盘）'));
+    } else if (agg.totalProfit !== 0 || agg.totalShares > 0) {
+      mainVal = (agg.totalProfit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(agg.totalProfit), 0);
+      mainCls = agg.totalProfit >= 0 ? 'up' : 'down';
+      mainLabel = '累计收益';
     } else {
       mainVal = sign(d.chg) + fmt(d.chg, 2) + '%';
       mainCls = c;
@@ -506,7 +555,8 @@
   function detailInner(code) {
     var f = code ? state.funds[code] : null;
     if (!f) return '<div class="empty"><div class="big">📈</div>选择一只基金查看详情</div>';
-    var d = displayOf(f), c = colorClass(d.chg), h = holdingOf(f);
+    var d = displayOf(f), c = colorClass(d.chg);
+    var agg = aggregate(f, holdingsOf(f));
     var sb = stateBadge(d);
     var dBadge = sb ? '<span class="state-badge ' + sb.c + '">' + sb.t + '</span>' : '';
     var color = d.chg >= 0 ? '#EE2B3B' : '#0CA678';
@@ -534,24 +584,39 @@
     html += spark;
     html += '<div>';
     html += kv('净值日期', (f.lastDate || '—') + (f.lastDate === todayStr() ? '（今日·真实）' : ''));
-    html += kv('当前市值', h ? ('¥' + fmt(h.marketValue, 2)) : '未设置持仓');
-    if (h) html += kv('持仓收益', '<span class="' + (h.profit >= 0 ? 'up' : 'down') + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(h.profit, 2) + ' (' + (h.profit >= 0 ? '+' : '') + fmt(h.profitPct, 2) + '%)</span>');
-    var tp = todayProfitOf(f);
-    if (tp != null) {
-      var tcls = tp >= 0 ? 'up' : 'down';
+    html += '</div>';
+    // 持仓汇总（多分组聚合）
+    html += '<div class="hold-sum">';
+    html += kv('总市值', agg.totalMV > 0 ? ('¥' + fmt(agg.totalMV, 2)) : '—');
+    html += kv('总收益', '<span class="' + (agg.totalProfit >= 0 ? 'up' : 'down') + '">' + (agg.totalProfit >= 0 ? '+' : '') + '¥' + fmt(agg.totalProfit, 2) + ' (' + (agg.totalProfit >= 0 ? '+' : '') + fmt(agg.totalProfitPct, 2) + '%)</span>');
+    if (agg.today != null) {
+      var tcls = agg.today >= 0 ? 'up' : 'down';
       var tsb = stateBadge(displayOf(f));
       var tbadge = tsb ? ' <span class="state-badge ' + tsb.c + '">' + tsb.t + '</span>' : '';
-      html += kv('今日收益', '<span class="' + tcls + '">' + (tp >= 0 ? '+' : '') + '¥' + fmt(tp, 2) + '</span>' + tbadge);
+      html += kv('今日收益', '<span class="' + tcls + '">' + (agg.today >= 0 ? '+' : '') + '¥' + fmt(agg.today, 2) + '</span>' + tbadge);
     }
     html += '</div>';
-    // 持仓编辑
-    html += '<div class="hold-edit"><div style="font-weight:700;margin-bottom:4px">持仓设置</div>';
-    html += '<label style="font-size:12px;color:var(--sub)">持有份额</label><input id="inpShares" type="number" inputmode="decimal" value="' + (f.shares || '') + '" placeholder="如 1000"/>';
-    html += '<label style="font-size:12px;color:var(--sub);margin-top:8px;display:block">成本价</label><input id="inpCost" type="number" inputmode="decimal" value="' + (f.costPrice || '') + '" placeholder="如 1.2345"/>';
-    html += '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-primary" data-act="saveHold" data-code="' + f.code + '">保存持仓</button></div></div>';
-    // 移动分组
-    html += '<div class="hold-edit"><div style="font-weight:700;margin-bottom:6px">所属分组</div><select id="selGroup" data-code="' + f.code + '" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px;background:var(--card);color:var(--txt)"><option value="">（未分组）</option>' + groupsOpts + '</select></div>';
-    html += '<button class="btn btn-ghost" data-act="del" data-code="' + f.code + '" style="color:var(--brand)">删除该基金</button>';
+    // 逐分组持仓列表（各自独立份额/成本）
+    html += '<div style="font-weight:700;margin:14px 0 6px">分组持仓（' + holdingsOf(f).length + '）</div>';
+    holdingsOf(f).forEach(function (h) {
+      var hv = holdingDerived(f, h);
+      var tp = todayProfitOf(f, h);
+      var gname = h.group || '未分组';
+      html += '<div class="hold-row">';
+      html += '<div class="hr-top"><span class="grp-tag">' + esc(gname) + '</span>';
+      html += '<span class="hr-acts"><button class="hr-btn" data-act="editHold" data-code="' + f.code + '" data-group="' + esc(h.group || '') + '">编辑</button>';
+      html += '<button class="hr-btn del" data-act="delHold" data-code="' + f.code + '" data-group="' + esc(h.group || '') + '">删除</button></span></div>';
+      if (hv) {
+        html += '<div class="hr-info">份额 ' + fmt(hv.shares, 0) + ' · 成本 ' + fmt(hv.cost, 4) + ' · 市值 ¥' + fmt(hv.marketValue, 0) + ' · 收益 <span class="' + (hv.profit >= 0 ? 'up' : 'down') + '">' + (hv.profit >= 0 ? '+' : '') + '¥' + fmt(hv.profit, 2) + '</span>';
+        if (tp != null) html += ' · 今日 <span class="' + (tp >= 0 ? 'up' : 'down') + '">' + (tp >= 0 ? '+' : '') + '¥' + fmt(tp, 2) + '</span>';
+        html += '</div>';
+      } else {
+        html += '<div class="hr-info">尚未设置份额 / 成本</div>';
+      }
+      html += '</div>';
+    });
+    html += '<button class="btn btn-primary" data-act="addHold" data-code="' + f.code + '" style="margin-top:10px;width:100%">＋ 添加分组持仓</button>';
+    html += '<button class="btn btn-ghost" data-act="del" data-code="' + f.code + '" style="color:var(--brand);margin-top:8px;width:100%">删除该基金</button>';
     html += '</div>';
     return html;
   }
@@ -562,9 +627,11 @@
 
   // ---------------- 渲染：收益 ----------------
   function renderPortfolio() {
-    var held = Object.keys(state.funds).map(function (k) { return state.funds[k]; }).filter(function (f) { return f.shares > 0; });
+    var pos = allPositions().filter(function (p) { return p.h.shares > 0; });
     var totMV = 0, totCost = 0, totProfit = 0;
-    held.forEach(function (f) { var h = holdingOf(f); if (h) { totMV += h.marketValue; totCost += h.cost; totProfit += h.profit; } });
+    pos.forEach(function (p) {
+      var hv = holdingDerived(p.f, p.h); if (hv) { totMV += hv.marketValue; totCost += hv.cost; totProfit += hv.profit; }
+    });
     var pct = totCost > 0 ? totProfit / totCost * 100 : 0;
     var c = colorClass(totProfit);
     var html = '';
@@ -572,16 +639,21 @@
     html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + c + '">' + (totProfit >= 0 ? '+' : '') + '¥' + fmt(totProfit, 2) + '</div><div class="chg-pill ' + c + '">' + (totProfit >= 0 ? '+' : '') + fmt(pct, 2) + '%</div></div>';
     html += '<div class="pstats"><div class="ps"><div class="pl">总市值</div><div class="pv">¥' + fmt(totMV, 2) + '</div></div><div class="ps"><div class="pl">总成本</div><div class="pv">¥' + fmt(totCost, 2) + '</div></div></div></div>';
     html += toolbarHTML();
-    html += '<div class="section-h">逐只明细（' + held.length + '）</div>';
-    if (!held.length) {
+    // 按基金聚合（多分组合并成一只）
+    var map = {};
+    pos.forEach(function (p) { (map[p.code] = map[p.code] || { f: p.f, hs: [] }).hs.push(p.h); });
+    var cards = Object.keys(map).map(function (c) { return map[c]; });
+    cards = sortFunds(cards);
+    html += '<div class="section-h">逐只明细（' + cards.length + '）</div>';
+    if (!cards.length) {
       html += '<div class="empty"><div class="big">💰</div>还没有设置持仓<br>在基金详情里填份额和成本价</div>';
     } else {
-      var heldSorted = sortFunds(held);
-      heldSorted.forEach(function (f) {
-        var h = holdingOf(f), hc = colorClass(h.profit);
+      cards.forEach(function (card) {
+        var f = card.f, agg = aggregate(f, card.hs), hc = colorClass(agg.totalProfit);
         html += '<div class="fcard" data-act="open" data-code="' + f.code + '"><div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + '</div></div>';
-        html += '<div class="val"><div class="v ' + hc + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(h.profit, 0) + '</div><div class="chg-pill ' + hc + '">' + (h.profit >= 0 ? '+' : '') + fmt(h.profitPct, 2) + '%</div></div></div>';
-        html += '<div class="bot"><span>市值 ¥' + fmt(h.marketValue, 0) + '</span><span>成本 ¥' + fmt(h.cost, 0) + '</span></div></div>';
+        html += '<div class="val"><div class="v ' + hc + '">' + (agg.totalProfit >= 0 ? '+' : '') + '¥' + fmt(agg.totalProfit, 0) + '</div><div class="chg-pill ' + hc + '">' + (agg.totalProfit >= 0 ? '+' : '') + fmt(agg.totalProfitPct, 2) + '%</div></div></div>';
+        var grpTxt = card.hs.length > 1 ? (card.hs.length + '个分组') : ((card.hs[0] && (card.hs[0].group || '')) || '');
+        html += '<div class="bot"><span>市值 ¥' + fmt(agg.totalMV, 0) + '</span><span>成本 ¥' + fmt(agg.totalCost, 0) + '</span>' + (grpTxt ? ('<span class="grp-tag">' + esc(grpTxt) + '</span>') : '') + '</div></div>';
       });
     }
     view.innerHTML = html;
@@ -601,7 +673,8 @@
         html += '<option value="">（未分组）</option>';
         state.groups.forEach(function (g) { html += '<option value="' + esc(g) + '" ' + (cur === g ? 'selected' : '') + '>' + esc(g) + '</option>'; });
         html += '</select>';
-        var added = !!state.funds[r.code];
+        var af = state.funds[r.code];
+        var added = af && holdingIn(af, ui.searchTargets[r.code] || '');
         html += '<button class="add ' + (added ? 'done' : '') + '" data-act="addFund" data-code="' + r.code + '" ' + (added ? 'disabled' : '')           + '>' + (added ? '已加' : '＋加') + '</button></div></div>';
       });
     } else {
@@ -617,7 +690,7 @@
       html += '<div class="empty"><div class="big">🗂️</div>还没有自定义分组<br>点下方“新建分组”</div>';
     }
     state.groups.forEach(function (g) {
-      var count = Object.keys(state.funds).filter(function (k) { return (state.funds[k].group || '') === g; }).length;
+      var count = allPositions().filter(function (p) { return (p.h.group || '') === g; }).length;
       html += '<div class="gitem"><span class="gname">' + esc(g) + '</span><span class="gcount">' + count + ' 只</span>';
       html += '<button class="gact" data-act="renameGroup" data-g="' + esc(g) + '">✎</button><button class="gact del" data-act="delGroup" data-g="' + esc(g) + '">🗑</button></div>';
     });
@@ -643,20 +716,21 @@
       render();
     });
   }
+  // 添加基金到某分组（同一基金可加多个分组，各自独立持仓）
   function addFund(code) {
-    if (state.funds[code]) return;
     var r = ui.searchResults.filter(function (x) { return x.code === code; })[0] || { code: code, name: '', type: '' };
     var name = r.name || code;
+    var group = ui.searchTargets[code] || '';
+    var f = state.funds[code];
     toast('正在添加…');
-    if (state.funds[code]) return; // 重复点击防护
-    state.funds[code] = {
-      code: code, name: name, type: r.type || '',
-      exchangeTraded: false,
-      group: ui.searchTargets[code] || '', shares: 0, costPrice: 0,
-      history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, estimate: null, updatedAt: 0
-    };
+    if (!f) {
+      f = { code: code, name: name, type: r.type || '', exchangeTraded: false, holdings: [], history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, estimate: null, estimateCurve: null, updatedAt: 0 };
+      state.funds[code] = f;
+    }
+    if (holdingIn(f, group)) { toast(name + ' 已在「' + (group || '未分组') + '」'); return; }
+    upsertHolding(f, group, 0, 0);
     save(); render();
-    toast('已添加 ' + name);
+    toast('已加入「' + (group || '未分组') + '」· ' + name);
     refreshOne(code);
   }
   function deleteFund(code) {
@@ -665,15 +739,17 @@
     save();
     if (ui.wide && ui.view === 'home') renderHome(); else render();
   }
+  // 把基金加入选中分组（保留其他分组 —— 支持同一基金多分组）
   function moveGroup(code, group) {
     var f = state.funds[code]; if (!f) return;
-    f.group = group || ''; save(); render();
+    if (holdingIn(f, group)) { toast('已在「' + (group || '未分组') + '」'); return; }
+    upsertHolding(f, group, 0, 0);
+    save(); render(); toast('已加入「' + (group || '未分组') + '」');
   }
-  function saveHold(code) {
+  // 保存某分组的持仓（份额/成本），由详情页 modal 回调
+  function saveHold(code, group, shares, cost) {
     var f = state.funds[code]; if (!f) return;
-    var s = parseFloat($('#inpShares').value), c = parseFloat($('#inpCost').value);
-    f.shares = isNaN(s) ? 0 : s;
-    f.costPrice = isNaN(c) ? 0 : c;
+    upsertHolding(f, group, shares, cost);
     save(); render(); toast('持仓已保存');
   }
   function newGroup() {
@@ -685,15 +761,19 @@
   function renameGroup(g) {
     openModal('重命名分组', g, function (newn) {
       if (!newn || newn === g) return;
-      Object.keys(state.funds).forEach(function (k) { if ((state.funds[k].group || '') === g) state.funds[k].group = newn; });
+      Object.keys(state.funds).forEach(function (k) {
+        holdingsOf(state.funds[k]).forEach(function (h) { if ((h.group || '') === g) h.group = newn; });
+      });
       var i = state.groups.indexOf(g); if (i >= 0) state.groups[i] = newn;
       if (state.defaultGroup === g) state.defaultGroup = newn;
       save(); render();
     });
   }
   function delGroup(g) {
-    confirmModal('删除分组“' + g + '”？组内基金会回到“未分组”，不会被删除。', function () {
-      Object.keys(state.funds).forEach(function (k) { if ((state.funds[k].group || '') === g) state.funds[k].group = ''; });
+    confirmModal('删除分组“' + g + '”？组内持仓会回到“未分组”，不会被删除。', function () {
+      Object.keys(state.funds).forEach(function (k) {
+        state.funds[k].holdings = holdingsOf(state.funds[k]).filter(function (h) { return (h.group || '') !== g; });
+      });
       var i = state.groups.indexOf(g); if (i >= 0) state.groups.splice(i, 1);
       if (state.defaultGroup === g) state.defaultGroup = state.groups[0] || '';
       if (ui.filter === g) ui.filter = '全部';
@@ -709,6 +789,36 @@
     var input = root.querySelector('#modalInput');
     setTimeout(function () { input.focus(); }, 50);
     root.querySelector('[data-m="ok"]').onclick = function () { var v = input.value.trim(); root.innerHTML = ''; if (v) onOk(v); };
+    root.querySelector('[data-m="cancel"]').onclick = function () { root.innerHTML = ''; };
+    root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
+  }
+  // 多分组持仓编辑：add=新增某组持仓；edit=编辑已有分组持仓
+  function openHoldModal(code, mode, group) {
+    var f = state.funds[code]; if (!f) return;
+    var g = group || '';
+    var ex = holdingIn(f, g);
+    var shares = ex ? ex.shares : '', cost = ex ? ex.costPrice : '';
+    var sel = '<select id="modalGroup" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px;background:var(--card);color:var(--txt)"><option value="">（未分组）</option>';
+    state.groups.forEach(function (gg) { sel += '<option value="' + esc(gg) + '" ' + ((mode === 'edit' ? g : (ui.searchTargets[code] || '')) === gg ? 'selected' : '') + '>' + esc(gg) + '</option>'; });
+    sel += '</select>';
+    var grpField = mode === 'edit'
+      ? '<div style="font-size:13px;color:var(--sub);margin-bottom:8px">分组：<b>' + esc(g || '未分组') + '</b></div>'
+      : '<label style="font-size:12px;color:var(--sub)">所属分组</label>' + sel;
+    var root = $('#modalRoot');
+    root.innerHTML = '<div class="modal-mask"><div class="modal"><h3>' + (mode === 'edit' ? '编辑持仓' : '添加分组持仓') + '</h3>' +
+      grpField +
+      '<label style="font-size:12px;color:var(--sub);margin-top:8px;display:block">持有份额</label><input id="modalShares" type="number" inputmode="decimal" value="' + shares + '" placeholder="如 1000"/>' +
+      '<label style="font-size:12px;color:var(--sub);margin-top:8px;display:block">成本价</label><input id="modalCost" type="number" inputmode="decimal" value="' + cost + '" placeholder="如 1.2345"/>' +
+      '<div class="mrow"><button class="cancel" data-m="cancel">取消</button><button class="ok" data-m="ok">保存</button></div></div></div>';
+    root.querySelector('[data-m="ok"]').onclick = function () {
+      var ng = mode === 'edit' ? g : (root.querySelector('#modalGroup').value || '');
+      var s = parseFloat(root.querySelector('#modalShares').value);
+      var c = parseFloat(root.querySelector('#modalCost').value);
+      root.innerHTML = '';
+      if (mode === 'edit') upsertHolding(f, g, s, c);
+      else upsertHolding(f, ng, s, c);
+      save(); render(); toast('持仓已保存');
+    };
     root.querySelector('[data-m="cancel"]').onclick = function () { root.innerHTML = ''; };
     root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
   }
@@ -770,24 +880,24 @@
   }
   function exportExcel() {
     if (typeof XLSX === 'undefined') { toast('Excel 组件未加载，请刷新重试'); return; }
-    var codes = Object.keys(state.funds).sort(function (a, b) {
-      var ga = (state.funds[a].group || ''), gb = (state.funds[b].group || '');
+    var pos = allPositions().filter(function (p) { return (p.h.shares > 0) || (p.h.costPrice > 0); });
+    pos.sort(function (a, b) {
+      var ga = (a.h.group || ''), gb = (b.h.group || '');
       if (ga !== gb) return ga < gb ? -1 : 1;
-      return a < b ? -1 : 1;
+      return a.code < b.code ? -1 : 1;
     });
     var aoa = [EXCEL_HEAD.slice()];
-    codes.forEach(function (code) {
-      var f = state.funds[code];
-      aoa.push([f.group || '', code, f.name || '', f.costPrice || 0, f.shares || 0]);
-    });
+    pos.forEach(function (p) { aoa.push([p.h.group || '', p.code, p.f.name || '', p.h.costPrice || 0, p.h.shares || 0]); });
     XLSX.writeFile(aoaSheet(aoa, '持仓'), '估值宝_持仓_' + todayStr() + '.xlsx');
-    toast('已导出 ' + codes.length + ' 只基金');
+    toast('已导出 ' + pos.length + ' 条持仓');
   }
   function exportTemplate() {
     if (typeof XLSX === 'undefined') { toast('Excel 组件未加载，请刷新重试'); return; }
+    // 示例演示“同一基金可挂在多个分组”（110011 在 示例组A / 示例组B 各一笔）
     var aoa = [
       EXCEL_HEAD.slice(),
-      ['示例组', '110011', '易方达中小盘（名称可留空）', 1.0000, 1000],
+      ['示例组A', '110011', '易方达中小盘（名称可留空）', 1.0000, 1000],
+      ['示例组B', '110011', '', 1.0000, 500],
       ['', '005827', '', 2.5000, 500]
     ];
     XLSX.writeFile(aoaSheet(aoa, '模板'), '估值宝_持仓模板.xlsx');
@@ -845,20 +955,19 @@
       if (!f) {
         if (!state.defaultGroup && group) state.defaultGroup = group;
         if (group && state.groups.indexOf(group) < 0) state.groups.push(group);
-        state.funds[code] = {
+        f = {
           code: code, name: name, type: '',
           exchangeTraded: false,
-          group: group, shares: isNaN(shares) ? 0 : shares, costPrice: isNaN(cost) ? 0 : cost,
-          history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, estimate: null, updatedAt: 0
+          holdings: [], history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, estimate: null, estimateCurve: null, updatedAt: 0
         };
+        state.funds[code] = f;
         added++;
       } else {
-        if (group) f.group = group;
-        if (!isNaN(cost)) f.costPrice = cost;
-        if (!isNaN(shares)) f.shares = shares;
         if (name && !f.name) f.name = name;
-        updated++;
       }
+      // 按 代码+分组 追加/更新持仓（同一基金可多分组）
+      upsertHolding(f, group, shares, cost);
+      updated++;
     }
     save();
     toast('导入完成：新增 ' + added + ' 只，更新 ' + updated + ' 只');
@@ -887,7 +996,13 @@
         case 'addFund': addFund(code); break;
         case 'goAdd': ui.view = 'add'; ui.searchKw = ''; ui.searchResults = []; ui.searching = false; render(); break;
         case 'info': openInfo(); break;
-        case 'saveHold': saveHold(code); break;
+        case 'addHold': openHoldModal(code, 'add'); break;
+        case 'editHold': openHoldModal(code, 'edit', g); break;
+        case 'delHold': (function () {
+          var f = state.funds[code]; if (!f) return;
+          var gg = g || ''; var grpName = gg || '未分组';
+          confirmModal('删除「' + grpName + '」下的该基金持仓？', function () { removeHolding(f, gg); save(); render(); });
+        })(); break;
         case 'newGroup': newGroup(); break;
         case 'renameGroup': renameGroup(g); break;
         case 'delGroup': delGroup(g); break;
@@ -943,7 +1058,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=8').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=9').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
