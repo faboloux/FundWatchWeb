@@ -1,0 +1,512 @@
+/* 估值宝 FundWatchWeb —— 纯前端基金净值/估值查看（自用）
+ * 数据源（均跨域<script>注入，无 CORS / Referer 限制）：
+ *  1) 东方财富 pingzhongdata.js  → 基金名 + 最新确认净值 + 历史净值（画走势）
+ *  2) 腾讯 qt.gtimg.cn/q=jj{code}  → 交易日盘中估算净值（date==今天 且开盘时启用）
+ *  3) 东方财富 fundsuggest JSONP    → 搜索添加
+ * 说明：盘中实时估值 JSONP（天天基金）2026 年已被官方停用，故本版以“最新确认净值+历史”
+ *       为主，并在交易时段尽力叠加盘中估算。估值 ≠ 官方净值。
+ */
+(function () {
+  'use strict';
+
+  var STORE_KEY = 'fundwatch_v1';
+  var $ = function (s) { return document.querySelector(s); };
+  var view = $('#view');
+  var tbTitle = $('#tbTitle');
+
+  // ---------------- 状态 ----------------
+  var state = { funds: {}, groups: [], defaultGroup: '', version: 1 };
+  var ui = {
+    view: 'home', filter: '全部', selectedCode: null,
+    searchKw: '', searchResults: [], searchTargets: {}, searching: false,
+    wide: false, lastUpd: 0, refreshing: false
+  };
+
+  // ---------------- 存储 ----------------
+  function load() {
+    try {
+      var r = localStorage.getItem(STORE_KEY);
+      if (r) { var s = JSON.parse(r); if (s && s.funds) { state.funds = s.funds || {}; state.groups = s.groups || []; state.defaultGroup = s.defaultGroup || ''; } }
+    } catch (e) {}
+  }
+  function save() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ funds: state.funds, groups: state.groups, defaultGroup: state.defaultGroup, version: 1 }));
+    } catch (e) { toast('当前环境无法本地保存（建议用本地服务器打开）'); }
+  }
+
+  // ---------------- 工具 ----------------
+  function fmt(n, d) { d = d == null ? 4 : d; if (n == null || isNaN(n)) return '—'; return Number(n).toFixed(d); }
+  function pad(x) { x = '' + x; return x.length < 2 ? '0' + x : x; }
+  function todayStr() { var d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function nowHM() { var d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function marketOpen() {
+    var d = new Date(), day = d.getDay();
+    if (day === 0 || day === 6) return false;
+    var t = d.getHours() * 60 + d.getMinutes();
+    return t >= 570 && t <= 900; // 9:30–15:00
+  }
+  function colorClass(v) { return v > 0 ? 'up' : (v < 0 ? 'down' : 'flat'); }
+  function arrow(v) { return v > 0 ? '▲' : (v < 0 ? '▼' : '—'); }
+  function sign(v) { return v > 0 ? '+' : ''; }
+  function esc(s) {
+    return ('' + (s == null ? '' : s)).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // ---------------- JSONP / 脚本注入 ----------------
+  function injectScript(src) {
+    return new Promise(function (resolve) {
+      var s = document.createElement('script');
+      s.src = src; s.async = true;
+      var done = false;
+      var fin = function (v) { if (done) return; done = true; if (s.parentNode) s.parentNode.removeChild(s); resolve(v); };
+      var to = setTimeout(function () { fin(null); }, 9000);
+      s.onload = function () { clearTimeout(to); fin('ok'); };
+      s.onerror = function () { clearTimeout(to); fin(null); };
+      document.body.appendChild(s);
+    });
+  }
+
+  function fetchPingzhong(code) {
+    try { delete window.Data_netWorthTrend; delete window.fS_name; } catch (e) {}
+    return injectScript('https://fund.eastmoney.com/pingzhongdata/' + code + '.js?_=' + Date.now())
+      .then(function (ok) {
+        if (ok !== 'ok') return null;
+        var trend = window.Data_netWorthTrend;
+        var name = window.fS_name;
+        if (!trend || !trend.length) return null;
+        // 元素结构：{x:时间戳(ms), y:净值, equityReturn:日涨跌%}
+        var last = trend[trend.length - 1];
+        var prev = trend[trend.length - 2] || last;
+        var nav = Number(last.y), pnav = Number(prev.y);
+        var er = Number(last.equityReturn);
+        var chg = (!isNaN(er)) ? er : (pnav ? (nav - pnav) / pnav * 100 : 0);
+        var dt = new Date(Number(last.x));
+        var dstr = dt.getFullYear() + '-' + pad(dt.getMonth() + 1) + '-' + pad(dt.getDate());
+        var history = trend.slice(-60).map(function (p) { return { t: Number(p.x), nav: Number(p.y) }; });
+        return { name: name || '', nav: nav, chg: chg, date: dstr, history: history };
+      });
+  }
+
+  function fetchIntraday(code) {
+    return injectScript('https://qt.gtimg.cn/q=jj' + code + '&_=' + Date.now())
+      .then(function (ok) {
+        if (ok !== 'ok') return null;
+        var raw = window['v_jj' + code];
+        if (!raw) return null;
+        var f = raw.split('~');
+        var nav = parseFloat(f[5]), chg = parseFloat(f[7]), date = (f[8] || '').trim();
+        if (!isNaN(nav) && date === todayStr() && marketOpen()) {
+          return { nav: nav, chg: chg, time: nowHM() };
+        }
+        return null;
+      });
+  }
+
+  function searchFunds(kw) {
+    var cb = 'fw_s_' + Date.now() + '_' + Math.floor(Math.random() * 1e6);
+    var p = new Promise(function (resolve) {
+      window[cb] = function (d) { try { delete window[cb]; } catch (e) {} resolve(d); };
+    });
+    var s = document.createElement('script');
+    s.src = 'https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?m=1&key=' +
+      encodeURIComponent(kw) + '&callback=' + cb + '&_=' + Date.now();
+    s.async = true;
+    var to = setTimeout(function () { try { delete window[cb]; } catch (e) {} resolve(null); }, 9000);
+    s.onload = function () { clearTimeout(to); };
+    s.onerror = function () { clearTimeout(to); try { delete window[cb]; } catch (e) {} resolve(null); };
+    document.body.appendChild(s);
+    return p.then(function (d) {
+      if (!d || !d.Datas) return [];
+      return d.Datas.map(function (x) {
+        return { code: x.CODE || (x.FundBaseInfo && x.FundBaseInfo.FCODE) || '', name: x.NAME || '', type: x.FundBaseInfo ? x.FundBaseInfo.FTYPE : '' };
+      }).filter(function (x) { return x.code; });
+    });
+  }
+
+  // ---------------- 派生值 ----------------
+  function displayOf(f) {
+    if (f.intraday && marketOpen()) {
+      return { nav: f.intraday.nav, chg: f.intraday.chg, label: '盘中估算 ' + f.intraday.time, intraday: true };
+    }
+    return { nav: f.lastNav, chg: f.lastChg, label: f.lastDate ? ('最新净值 ' + f.lastDate) : '暂无净值', intraday: false };
+  }
+  function holdingOf(f) {
+    if (!(f.shares > 0)) return null;
+    var d = displayOf(f);
+    var nav = d.nav || 0, cost = f.costPrice || 0;
+    var mv = nav * f.shares, profit = (nav - cost) * f.shares, pct = cost > 0 ? (nav - cost) / cost * 100 : 0;
+    return { shares: f.shares, cost: cost, marketValue: mv, profit: profit, profitPct: pct };
+  }
+
+  // ---------------- 刷新 ----------------
+  function refreshOne(code) {
+    var f = state.funds[code]; if (!f) return Promise.resolve();
+    return fetchPingzhong(code).then(function (pd) {
+      return fetchIntraday(code).then(function (intra) {
+        var f2 = state.funds[code]; if (!f2) return;
+        if (pd) {
+          if (pd.name) f2.name = pd.name;
+          f2.lastNav = pd.nav; f2.lastChg = pd.chg; f2.lastDate = pd.date; f2.history = pd.history;
+        }
+        f2.intraday = intra; f2.updatedAt = Date.now(); save();
+        if (ui.view === 'home' || ui.view === 'detail' || ui.view === 'portfolio') render();
+      });
+    }).catch(function () {});
+  }
+
+  function refreshAll() {
+    if (ui.refreshing) return;
+    ui.refreshing = true; setSpin(true);
+    var codes = Object.keys(state.funds);
+    var seq = Promise.resolve();
+    codes.forEach(function (code) {
+      seq = seq.then(function () {
+        return refreshOne(code);
+      });
+    });
+    seq.then(function () {
+      ui.refreshing = false; ui.lastUpd = Date.now(); setSpin(false); render();
+    });
+  }
+
+  function setSpin(on) { var b = $('#btnRefresh'); if (b) b.classList.toggle('spin', on); }
+
+  // ---------------- 渲染：通用 ----------------
+  function render() {
+    var titleMap = { home: '自选基金', portfolio: '持仓收益', groups: '分组管理', add: '添加基金', detail: (ui.selectedCode && state.funds[ui.selectedCode] ? state.funds[ui.selectedCode].name : '详情') };
+    tbTitle.textContent = titleMap[ui.view] || '估值宝';
+    var activeTab = ui.view === 'detail' ? 'home' : ui.view;
+    document.querySelectorAll('.tab').forEach(function (t) { t.classList.toggle('active', t.dataset.view === activeTab); });
+    if (ui.view === 'home') renderHome();
+    else if (ui.view === 'portfolio') renderPortfolio();
+    else if (ui.view === 'groups') renderGroups();
+    else if (ui.view === 'add') renderAdd();
+    else if (ui.view === 'detail') renderDetail();
+    var fab = document.getElementById('btnAdd');
+    if (fab) fab.style.display = (ui.view === 'home' || ui.view === 'portfolio') ? 'flex' : 'none';
+  }
+
+  function visibleFunds() {
+    var all = Object.keys(state.funds).map(function (k) { return state.funds[k]; });
+    if (ui.filter === '全部') return all;
+    return all.filter(function (f) { return (f.group || '') === ui.filter; });
+  }
+
+  function lastUpdText() { return ui.lastUpd ? ('更新 ' + nowHM()) : '未更新'; }
+
+  // ---------------- 渲染：首页 ----------------
+  function renderHome() {
+    var open = marketOpen();
+    var html = '';
+    html += '<div class="market-row"><div class="market ' + (open ? 'open' : '') + '"><span class="dot"></span>' + (open ? '盘中交易中' : '非交易时段') + '</div><span class="upd">' + lastUpdText() + '</span></div>';
+    // 分组标签栏
+    html += '<div class="gtabs">';
+    var groups = ['全部'].concat(state.groups);
+    groups.forEach(function (g) {
+      html += '<button class="gtab ' + (ui.filter === g ? 'on' : '') + '" data-act="filter" data-g="' + esc(g) + '">' + esc(g) + '</button>';
+    });
+    html += '<button class="gtab add" data-act="newGroup">＋分组</button>';
+    html += '</div>';
+    html += '<div class="info-note">估值 ≠ 官方净值 · 交易时段自动叠加盘中估算（点右上角“数据说明”查看）</div>';
+
+    var list = visibleFunds();
+    if (ui.wide) {
+      html += '<div class="home-grid">';
+      html += '<div class="pane-list">' + (list.length ? list.map(cardHTML).join('') : emptyMini()) + '</div>';
+      html += '<div class="pane-detail">' + detailInner(ui.selectedCode && state.funds[ui.selectedCode] ? ui.selectedCode : null) + '</div>';
+      html += '</div>';
+    } else {
+      html += list.length ? list.map(cardHTML).join('') : '<div class="empty"><div class="big">📭</div>还没有基金<br>点右下角 “＋” 添加，或去“收益”页</div>';
+    }
+    view.innerHTML = html;
+  }
+
+  function emptyMini() { return '<div class="empty" style="padding:30px 10px">该分组暂无基金</div>'; }
+
+  function cardHTML(f) {
+    var d = displayOf(f), c = colorClass(d.chg), h = holdingOf(f);
+    var grp = f.group ? '<span class="grp-tag">' + esc(f.group) + '</span>' : '';
+    var hold = h ? '<span class="' + (h.profit >= 0 ? 'up' : 'down') + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(Math.abs(h.profit), 0) + '</span>' : '';
+    return '<div class="fcard" data-act="open" data-code="' + f.code + '">' +
+      '<button class="del" data-act="del" data-code="' + f.code + '" title="删除">✕</button>' +
+      '<div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + '</div></div>' +
+      '<div class="val"><div class="v ' + c + '">' + fmt(d.nav) + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div></div></div>' +
+      '<div class="bot"><span>' + esc(d.label) + '</span>' + hold + '</div>' + grp +
+      '</div>';
+  }
+
+  // ---------------- 渲染：详情 ----------------
+  function sparkSVG(history, w, h, color) {
+    if (!history || history.length < 2) return '<div class="spark" style="display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:13px">暂无足够历史数据</div>';
+    var vals = history.map(function (p) { return p.nav; });
+    var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+    var rng = (max - min) || 1, n = vals.length;
+    var pts = vals.map(function (v, i) { var x = (i / (n - 1)) * w; var y = h - ((v - min) / rng) * (h - 12) - 6; return x.toFixed(1) + ',' + y.toFixed(1); }).join(' ');
+    var area = '0,' + h + ' ' + pts + ' ' + w + ',' + h;
+    return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+      '<polygon points="' + area + '" fill="' + color + '22" stroke="none"></polygon>' +
+      '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round"></polyline></svg>';
+  }
+
+  function detailInner(code) {
+    var f = code ? state.funds[code] : null;
+    if (!f) return '<div class="empty"><div class="big">📈</div>选择一只基金查看详情</div>';
+    var d = displayOf(f), c = colorClass(d.chg), h = holdingOf(f);
+    var color = d.chg >= 0 ? '#EE2B3B' : '#0CA678';
+    var nav = d.nav || 0;
+    var groupsOpts = state.groups.map(function (g) { return '<option value="' + esc(g) + '" ' + ((f.group || '') === g ? 'selected' : '') + '>' + esc(g) + '</option>'; }).join('');
+    var spark = sparkSVG(f.history, 300, 140, color);
+
+    var html = '<div class="detail-wrap">';
+    html += '<div class="detail-head"><div><div style="font-weight:700;font-size:16px">' + esc(f.name || f.code) + '</div><div style="font-size:12px;color:var(--sub)">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + '</div></div>';
+    html += '<button class="icon-btn" data-act="back" style="background:transparent">✕</button></div>';
+    html += '<div class="detail-big ' + c + '">' + fmt(nav) + '</div><div class="detail-ch"><span class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</span> <span style="font-size:12.5px;color:var(--sub);font-weight:600">' + esc(d.label) + '</span></div>';
+    html += spark;
+    html += '<div>';
+    html += kv('净值日期', f.lastDate || '—');
+    html += kv('当前市值', h ? ('¥' + fmt(h.marketValue, 2)) : '未设置持仓');
+    if (h) html += kv('持仓收益', '<span class="' + (h.profit >= 0 ? 'up' : 'down') + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(h.profit, 2) + ' (' + (h.profit >= 0 ? '+' : '') + fmt(h.profitPct, 2) + '%)</span>');
+    html += '</div>';
+    // 持仓编辑
+    html += '<div class="hold-edit"><div style="font-weight:700;margin-bottom:4px">持仓设置</div>';
+    html += '<label style="font-size:12px;color:var(--sub)">持有份额</label><input id="inpShares" type="number" inputmode="decimal" value="' + (f.shares || '') + '" placeholder="如 1000"/>';
+    html += '<label style="font-size:12px;color:var(--sub);margin-top:8px;display:block">成本价</label><input id="inpCost" type="number" inputmode="decimal" value="' + (f.costPrice || '') + '" placeholder="如 1.2345"/>';
+    html += '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-primary" data-act="saveHold" data-code="' + f.code + '">保存持仓</button></div></div>';
+    // 移动分组
+    html += '<div class="hold-edit"><div style="font-weight:700;margin-bottom:6px">所属分组</div><select id="selGroup" data-code="' + f.code + '" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px;background:var(--card);color:var(--txt)"><option value="">（未分组）</option>' + groupsOpts + '</select></div>';
+    html += '<button class="btn btn-ghost" data-act="del" data-code="' + f.code + '" style="color:var(--brand)">删除该基金</button>';
+    html += '</div>';
+    return html;
+  }
+
+  function kv(k, v) { return '<div class="kv"><span class="k">' + k + '</span><span>' + v + '</span></div>'; }
+
+  function renderDetail() { view.innerHTML = detailInner(ui.selectedCode); }
+
+  // ---------------- 渲染：收益 ----------------
+  function renderPortfolio() {
+    var held = Object.keys(state.funds).map(function (k) { return state.funds[k]; }).filter(function (f) { return f.shares > 0; });
+    var totMV = 0, totCost = 0, totProfit = 0;
+    held.forEach(function (f) { var h = holdingOf(f); if (h) { totMV += h.marketValue; totCost += h.cost; totProfit += h.profit; } });
+    var pct = totCost > 0 ? totProfit / totCost * 100 : 0;
+    var c = colorClass(totProfit);
+    var html = '';
+    html += '<div class="section-h">持仓总览</div>';
+    html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + c + '">' + (totProfit >= 0 ? '+' : '') + '¥' + fmt(totProfit, 2) + '</div><div class="chg-pill ' + c + '">' + (totProfit >= 0 ? '+' : '') + fmt(pct, 2) + '%</div></div>';
+    html += '<div class="pstats"><div class="ps"><div class="pl">总市值</div><div class="pv">¥' + fmt(totMV, 2) + '</div></div><div class="ps"><div class="pl">总成本</div><div class="pv">¥' + fmt(totCost, 2) + '</div></div></div></div>';
+    html += '<div class="section-h">逐只明细（' + held.length + '）</div>';
+    if (!held.length) {
+      html += '<div class="empty"><div class="big">💰</div>还没有设置持仓<br>在基金详情里填份额和成本价</div>';
+    } else {
+      held.forEach(function (f) {
+        var h = holdingOf(f), hc = colorClass(h.profit);
+        html += '<div class="fcard" data-act="open" data-code="' + f.code + '"><div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + '</div></div>';
+        html += '<div class="val"><div class="v ' + hc + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(h.profit, 0) + '</div><div class="chg-pill ' + hc + '">' + (h.profit >= 0 ? '+' : '') + fmt(h.profitPct, 2) + '%</div></div></div>';
+        html += '<div class="bot"><span>市值 ¥' + fmt(h.marketValue, 0) + '</span><span>成本 ¥' + fmt(h.cost, 0) + '</span></div></div>';
+      });
+    }
+    view.innerHTML = html;
+  }
+
+  // ---------------- 渲染：添加 ----------------
+  function renderAdd() {
+    var html = '';
+    html += '<div class="searchbar"><input id="searchInput" type="search" placeholder="输入基金代码或名称" value="' + esc(ui.searchKw || '') + '"/><button class="go" data-act="doSearch">搜索</button></div>';
+    if (ui.searching) {
+      html += '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+    } else if (ui.searchResults.length) {
+      ui.searchResults.forEach(function (r) {
+        var cur = ui.searchTargets[r.code] != null ? ui.searchTargets[r.code] : (state.defaultGroup || (state.groups[0] || ''));
+        html += '<div class="res"><div class="row"><div style="flex:1;min-width:0"><div class="nm">' + esc(r.name) + '</div><div class="cd">' + esc(r.code) + (r.type ? (' · ' + esc(r.type)) : '') + '</div></div>';
+        html += '<select class="grp-sel" data-code="' + r.code + '">';
+        html += '<option value="">（未分组）</option>';
+        state.groups.forEach(function (g) { html += '<option value="' + esc(g) + '" ' + (cur === g ? 'selected' : '') + '>' + esc(g) + '</option>'; });
+        html += '</select>';
+        var added = !!state.funds[r.code];
+        html += '<button class="add ' + (added ? 'done' : '') + '" data-act="addFund" data-code="' + r.code + '" ' + (added ? 'disabled' : '')           + '>' + (added ? '已加' : '＋加') + '</button></div></div>';
+      });
+    } else {
+      html += '<div class="add-hint"><div class="big">🔍</div>输入基金代码或名称开始搜索<br>例如：110011（易方达中小盘）</div>';
+    }
+    view.innerHTML = html;
+  }
+
+  // ---------------- 渲染：分组管理 ----------------
+  function renderGroups() {
+    var html = '<div class="section-h">分组（' + state.groups.length + '）</div>';
+    if (!state.groups.length) {
+      html += '<div class="empty"><div class="big">🗂️</div>还没有自定义分组<br>点下方“新建分组”</div>';
+    }
+    state.groups.forEach(function (g) {
+      var count = Object.keys(state.funds).filter(function (k) { return (state.funds[k].group || '') === g; }).length;
+      html += '<div class="gitem"><span class="gname">' + esc(g) + '</span><span class="gcount">' + count + ' 只</span>';
+      html += '<button class="gact" data-act="renameGroup" data-g="' + esc(g) + '">✎</button><button class="gact del" data-act="delGroup" data-g="' + esc(g) + '">🗑</button></div>';
+    });
+    html += '<button class="btn btn-primary" data-act="newGroup" style="margin-top:14px">＋ 新建分组</button>';
+    view.innerHTML = html;
+  }
+
+  // ---------------- 动作 ----------------
+  function doSearch() {
+    var kw = (ui.searchKw || '').trim(); if (!kw) return;
+    ui.view = 'add'; ui.searching = true; ui.searchResults = []; render();
+    searchFunds(kw).then(function (list) {
+      ui.searching = false; ui.searchResults = list;
+      list.forEach(function (r) { if (!(r.code in ui.searchTargets)) ui.searchTargets[r.code] = state.defaultGroup || (state.groups[0] || ''); });
+      render();
+    });
+  }
+  function addFund(code) {
+    if (state.funds[code]) return;
+    var r = ui.searchResults.filter(function (x) { return x.code === code; })[0] || { code: code, name: '', type: '' };
+    state.funds[code] = {
+      code: code, name: r.name || code, type: r.type || '',
+      group: ui.searchTargets[code] || '', shares: 0, costPrice: 0,
+      history: [], lastNav: null, lastChg: 0, lastDate: '', intraday: null, updatedAt: 0
+    };
+    save(); render(); toast('已添加 ' + (r.name || code));
+    refreshOne(code);
+  }
+  function deleteFund(code) {
+    delete state.funds[code];
+    if (ui.selectedCode === code) ui.selectedCode = null;
+    save();
+    if (ui.wide && ui.view === 'home') renderHome(); else render();
+  }
+  function moveGroup(code, group) {
+    var f = state.funds[code]; if (!f) return;
+    f.group = group || ''; save(); render();
+  }
+  function saveHold(code) {
+    var f = state.funds[code]; if (!f) return;
+    var s = parseFloat($('#inpShares').value), c = parseFloat($('#inpCost').value);
+    f.shares = isNaN(s) ? 0 : s;
+    f.costPrice = isNaN(c) ? 0 : c;
+    save(); render(); toast('持仓已保存');
+  }
+  function newGroup() {
+    openModal('新建分组', '', function (name) {
+      if (!name) return;
+      if (state.groups.indexOf(name) < 0) { state.groups.push(name); if (!state.defaultGroup) state.defaultGroup = name; save(); render(); toast('已建分组 ' + name); }
+    });
+  }
+  function renameGroup(g) {
+    openModal('重命名分组', g, function (newn) {
+      if (!newn || newn === g) return;
+      Object.keys(state.funds).forEach(function (k) { if ((state.funds[k].group || '') === g) state.funds[k].group = newn; });
+      var i = state.groups.indexOf(g); if (i >= 0) state.groups[i] = newn;
+      if (state.defaultGroup === g) state.defaultGroup = newn;
+      save(); render();
+    });
+  }
+  function delGroup(g) {
+    confirmModal('删除分组“' + g + '”？组内基金会回到“未分组”，不会被删除。', function () {
+      Object.keys(state.funds).forEach(function (k) { if ((state.funds[k].group || '') === g) state.funds[k].group = ''; });
+      var i = state.groups.indexOf(g); if (i >= 0) state.groups.splice(i, 1);
+      if (state.defaultGroup === g) state.defaultGroup = state.groups[0] || '';
+      if (ui.filter === g) ui.filter = '全部';
+      save(); render();
+    });
+  }
+
+  // ---------------- 模态 ----------------
+  function openModal(title, value, onOk) {
+    var root = $('#modalRoot');
+    root.innerHTML = '<div class="modal-mask"><div class="modal"><h3>' + esc(title) + '</h3>' +
+      '<input id="modalInput" value="' + esc(value || '') + '" placeholder="分组名称"/><div class="mrow"><button class="cancel" data-m="cancel">取消</button><button class="ok" data-m="ok">确定</button></div></div></div>';
+    var input = root.querySelector('#modalInput');
+    setTimeout(function () { input.focus(); }, 50);
+    root.querySelector('[data-m="ok"]').onclick = function () { var v = input.value.trim(); root.innerHTML = ''; if (v) onOk(v); };
+    root.querySelector('[data-m="cancel"]').onclick = function () { root.innerHTML = ''; };
+    root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
+  }
+  function confirmModal(msg, onYes) {
+    var root = $('#modalRoot');
+    root.innerHTML = '<div class="modal-mask"><div class="modal"><h3>' + esc(msg) + '</h3><div class="mrow"><button class="cancel" data-m="no">取消</button><button class="ok" data-m="yes" style="background:var(--brand)">确定</button></div></div></div>';
+    root.querySelector('[data-m="yes"]').onclick = function () { root.innerHTML = ''; onYes(); };
+    root.querySelector('[data-m="no"]').onclick = function () { root.innerHTML = ''; };
+    root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
+  }
+  function infoModal(msg) {
+    var root = $('#modalRoot');
+    root.innerHTML = '<div class="modal-mask"><div class="modal"><h3>数据说明</h3>' + msg +
+      '<div class="mrow"><button class="ok" data-m="ok">知道了</button></div></div></div>';
+    root.querySelector('[data-m="ok"]').onclick = function () { root.innerHTML = ''; };
+    root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
+  }
+  function openInfo() {
+    infoModal('<p>数据来自东方财富与腾讯的公开接口（跨域脚本注入获取，无需后端）。</p>' +
+      '<p>盘中实时估值的老接口已于 2026 年停用，本版展示<b>最新确认净值 + 历史走势</b>；若你的网络在交易时段（9:30–15:00）能取到盘中估算，会自动叠加。</p>' +
+      '<p>估值 ≠ 官方净值，仅供参考，不构成投资建议。</p>');
+  }
+  var toastTimer = null;
+  function toast(msg) {
+    var t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+    document.body.appendChild(t);
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 2000);
+  }
+
+  // ---------------- 事件 ----------------
+  function onClick(e) {
+    var el = e.target.closest('[data-act]');
+    if (el) {
+      var act = el.dataset.act, code = el.dataset.code, g = el.dataset.g;
+      switch (act) {
+        case 'open': ui.selectedCode = code; if (ui.wide) renderHome(); else { ui.view = 'detail'; render(); } break;
+        case 'back': if (ui.wide) { ui.selectedCode = null; renderHome(); } else { ui.view = 'home'; render(); } break;
+        case 'filter': ui.filter = g; renderHome(); break;
+        case 'del': e.stopPropagation(); var nm = (state.funds[code] && state.funds[code].name) || code; confirmModal('确定删除“' + nm + '”？', function () { deleteFund(code); }); break;
+        case 'doSearch': doSearch(); break;
+        case 'addFund': addFund(code); break;
+        case 'goAdd': ui.view = 'add'; ui.searchKw = ''; ui.searchResults = []; ui.searching = false; render(); break;
+        case 'info': openInfo(); break;
+        case 'saveHold': saveHold(code); break;
+        case 'newGroup': newGroup(); break;
+        case 'renameGroup': renameGroup(g); break;
+        case 'delGroup': delGroup(g); break;
+      }
+      return;
+    }
+    var tab = e.target.closest('.tab');
+    if (tab) { ui.view = tab.dataset.view; ui.selectedCode = null; render(); return; }
+    if (e.target.id === 'btnRefresh') { refreshAll(); return; }
+    if (e.target.id === 'btnSettings') { ui.view = 'groups'; render(); return; }
+  }
+  function onInput(e) {
+    if (e.target.id === 'searchInput') { ui.searchKw = e.target.value; return; }
+    if (e.target.classList.contains('grp-sel')) { ui.searchTargets[e.target.dataset.code] = e.target.value; return; }
+  }
+  function onChange(e) {
+    if (e.target.id === 'selGroup') { moveGroup(e.target.dataset.code, e.target.value); }
+  }
+
+  // ---------------- 宽屏检测 ----------------
+  function checkWide() { ui.wide = window.matchMedia('(min-width:840px)').matches; }
+
+  // ---------------- 初始化 ----------------
+  function init() {
+    load(); checkWide();
+    document.querySelectorAll('.tab').forEach(function (t) {
+      t.addEventListener('click', function () { ui.view = t.dataset.view; ui.selectedCode = null; render(); });
+    });
+    $('#btnRefresh').addEventListener('click', function () { refreshAll(); });
+    $('#btnSettings').addEventListener('click', function () { ui.view = 'groups'; render(); });
+    document.addEventListener('click', onClick);
+    document.addEventListener('input', onInput);
+    document.addEventListener('change', onChange);
+    window.addEventListener('resize', function () {
+      var w = window.matchMedia('(min-width:840px)').matches;
+      if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
+    });
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js').catch(function () {}); } catch (e) {} }
+    render();
+    refreshAll();
+  }
+
+  if (document.readyState !== 'loading') init();
+  else document.addEventListener('DOMContentLoaded', init);
+})();
