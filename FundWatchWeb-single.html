@@ -1211,9 +1211,13 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
   function processExcelRows(rows) {
     var headerIdx = -1, header = null;
+    var isHeaderCell = function (c) {
+      var s = ('' + c).trim().toLowerCase();
+      return ('' + c).indexOf('基金代码') >= 0 || s === 'code' || s === '代码';
+    };
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i];
-      if (r && r.some(function (c) { return ('' + c).indexOf('基金代码') >= 0; })) { headerIdx = i; header = r; break; }
+      if (r && r.some(isHeaderCell)) { headerIdx = i; header = r; break; }
     }
     if (headerIdx < 0) { toast('未找到表头（需含“基金代码”列）'); return; }
     var idx = function (names) {
