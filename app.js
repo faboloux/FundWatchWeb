@@ -425,12 +425,16 @@
     var vals = history.map(function (p) { return p.nav; });
     var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
     var rng = (max - min) || 1, n = vals.length;
+    var first = null, last = null;
     var pts = history.map(function (p, i) {
       var x = (opts.timeField && p[opts.timeField]) ? timeToX(timeToMin(p[opts.timeField]), w) : (i / (n - 1)) * w;
       var y = h - ((p.nav - min) / rng) * (h - 12) - 6;
-      return x.toFixed(1) + ',' + y.toFixed(1);
+      var s = x.toFixed(1) + ',' + y.toFixed(1);
+      if (i === 0) first = { x: x, y: y };
+      last = { x: x, y: y };
+      return s;
     }).join(' ');
-    var area = '0,' + h + ' ' + pts + ' ' + w + ',' + h;
+    var area = first.x.toFixed(1) + ',' + h + ' ' + pts + ' ' + last.x.toFixed(1) + ',' + h;
     return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
       '<polygon points="' + area + '" fill="' + color + '22" stroke="none"></polygon>' +
       '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round"></polyline></svg>';
