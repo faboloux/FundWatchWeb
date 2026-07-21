@@ -224,6 +224,32 @@
     return { shares: f.shares, cost: cost, marketValue: mv, profit: profit, profitPct: pct };
   }
 
+  // 当前估值口径（用于首页/收益汇总标签）：交易时段且有实时数据→“盘中估值”，否则“最新净值”
+  function currentValLabel() {
+    if (!marketOpen()) return '按最新净值';
+    var has = Object.keys(state.funds).some(function (k) {
+      var f = state.funds[k];
+      return (f.exchangeTraded && f.live) || (f.estimate && marketOpen());
+    });
+    return has ? '按盘中估值' : '按最新净值';
+  }
+  // 汇总某范围内持仓基金的“按当前估值”收益（holdingOf 已用 displayOf 当前估值）
+  function sumHold(codes) {
+    var profit = 0, mv = 0, cost = 0, count = 0;
+    codes.forEach(function (code) {
+      var f = state.funds[code]; if (!f || !(f.shares > 0)) return;
+      var h = holdingOf(f); if (!h) return;
+      profit += h.profit; mv += h.marketValue; cost += h.cost; count++;
+    });
+    return { profit: profit, mv: mv, cost: cost, count: count };
+  }
+  // 当前筛选范围下的基金代码（“全部”=所有；“分组”=该组）
+  function scopeCodes() {
+    var all = Object.keys(state.funds);
+    if (ui.filter === '全部') return all;
+    return all.filter(function (k) { return (state.funds[k].group || '') === ui.filter; });
+  }
+
   // ---------------- 刷新 ----------------
   function refreshOne(code) {
     var f = state.funds[code]; if (!f) return Promise.resolve();
@@ -297,15 +323,37 @@
     var open = marketOpen();
     var html = '';
     html += '<div class="market-row"><div class="market ' + (open ? 'open' : '') + '"><span class="dot"></span>' + (open ? '盘中交易中' : '非交易时段') + '</div><span class="upd">' + lastUpdText() + '</span></div>';
-    // 分组标签栏
+    // 分组标签栏（每个标签下显示本范围按估值的收益金额）
     html += '<div class="gtabs">';
-    var groups = ['全部'].concat(state.groups);
-    groups.forEach(function (g) {
-      html += '<button class="gtab ' + (ui.filter === g ? 'on' : '') + '" data-act="filter" data-g="' + esc(g) + '">' + esc(g) + '</button>';
+    var allCodes = Object.keys(state.funds);
+    var allSum = sumHold(allCodes);
+    var gtabSub = function (profit, count) {
+      if (!count) return '';
+      return '<span class="gtab-sub ' + (profit >= 0 ? 'up' : 'down') + '">' + (profit >= 0 ? '+' : '') + '¥' + fmt(Math.abs(profit), 0) + '</span>';
+    };
+    html += '<button class="gtab ' + (ui.filter === '全部' ? 'on' : '') + '" data-act="filter" data-g="全部">全部' + gtabSub(allSum.profit, allSum.count) + '</button>';
+    state.groups.forEach(function (g) {
+      var gc = allCodes.filter(function (k) { return (state.funds[k].group || '') === g; });
+      var gs = sumHold(gc);
+      html += '<button class="gtab ' + (ui.filter === g ? 'on' : '') + '" data-act="filter" data-g="' + esc(g) + '">' + esc(g) + gtabSub(gs.profit, gs.count) + '</button>';
     });
     html += '<button class="gtab add" data-act="newGroup">＋分组</button>';
     html += '</div>';
-    html += '<div class="info-note">场外基金盘中显示新浪实时估值 · 场内基金(ETF/LOF)显示腾讯实时价（点右上角“i”查看数据说明）</div>';
+    html += '<div class="info-note">首页主数字<b>优先显示实时估值</b>：场外基金盘中=新浪实时估值 · 场内基金(ETF/LOF)=腾讯实时价（点右上角“i”查看数据说明）</div>';
+
+    // 当前范围「按当前估值」收益汇总（全部=所有基金；分组=该组）
+    var sc = scopeCodes();
+    var sum = sumHold(sc);
+    var scopeLabel = ui.filter === '全部' ? '全部持仓收益' : ('「' + ui.filter + '」分组收益');
+    var vlabel = currentValLabel();
+    html += '<div class="section-h">' + esc(scopeLabel) + '（' + vlabel + '）</div>';
+    if (sum.count > 0) {
+      var pc = colorClass(sum.profit), ppct = sum.cost > 0 ? sum.profit / sum.cost * 100 : 0;
+      html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</div></div>';
+      html += '<div class="pstats"><div class="ps"><div class="pl">总市值</div><div class="pv">¥' + fmt(sum.mv, 2) + '</div></div><div class="ps"><div class="pl">总成本</div><div class="pv">¥' + fmt(sum.cost, 2) + '</div></div></div></div>';
+    } else {
+      html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示按' + vlabel + '计算的收益</div>';
+    }
 
     var list = visibleFunds();
     if (ui.wide) {
@@ -398,7 +446,7 @@
     var pct = totCost > 0 ? totProfit / totCost * 100 : 0;
     var c = colorClass(totProfit);
     var html = '';
-    html += '<div class="section-h">持仓总览</div>';
+    html += '<div class="section-h">持仓总览（' + currentValLabel() + '）</div>';
     html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + c + '">' + (totProfit >= 0 ? '+' : '') + '¥' + fmt(totProfit, 2) + '</div><div class="chg-pill ' + c + '">' + (totProfit >= 0 ? '+' : '') + fmt(pct, 2) + '%</div></div>';
     html += '<div class="pstats"><div class="ps"><div class="pl">总市值</div><div class="pv">¥' + fmt(totMV, 2) + '</div></div><div class="ps"><div class="pl">总成本</div><div class="pv">¥' + fmt(totCost, 2) + '</div></div></div></div>';
     html += '<div class="section-h">逐只明细（' + held.length + '）</div>';
