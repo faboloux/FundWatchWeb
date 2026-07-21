@@ -132,7 +132,7 @@
         for (var i = f.length - 1; i >= 0; i--) {
           if (/^\d{14}$/.test(f[i] || '')) { var s = f[i] + ''; ts = s.slice(8, 10) + ':' + s.slice(10, 12); break; }
         }
-        return { price: price, chg: chg, time: ts || nowHM(), name: f[1] };
+        return { price: price, chg: chg, time: ts || nowHM(), name: f[1], date: todayStr() };
       })
       .catch(function () { return null; });
   }
@@ -174,11 +174,12 @@
         var nav2 = parseFloat(last.pre_nav2);   // 口径3 估算净值
         var pct2 = parseFloat(last.nav2_pct);   // 口径3 估算涨跌幅%
         var tm = ('' + (last.min_time || '')).slice(0, 5);
-        if (Number.isFinite(nav) && pd === todayStr() && marketOpen()) {
+        if (Number.isFinite(nav) && pd === todayStr()) {
           out.estimate = {
             nav: nav, chg: Number.isFinite(pct) ? pct : 0, time: tm || nowHM(),
             nav2: Number.isFinite(nav2) ? nav2 : null,
-            chg2: Number.isFinite(pct2) ? pct2 : null
+            chg2: Number.isFinite(pct2) ? pct2 : null,
+            date: todayStr()
           };
         }
         // 今日的盘中估值曲线（所有点，用于详情页画图）
@@ -220,16 +221,32 @@
   }
 
   // ---------------- 派生值 ----------------
+  // 数据源优先级状态机：
+  //  ① 今日真实净值已更新(lastDate==今天) → 真实净值（今日涨跌为真实）
+  //  ② 场内基金(ETF/LOF)：腾讯当日行情 —— 交易时段=实时价；收盘后=当日收盘价(真实市价)
+  //  ③ 场外基金：新浪当日估值 —— 交易时段=盘中估值；收盘后=15:00 收盘预估
+  //  ④ 兜底：最新确认净值(非今日) → 无法算“今日”收益(chgToday=null)
   function displayOf(f) {
-    // 场内基金且处于交易时段：返回腾讯实时价（精确，非估算）
-    if (f.exchangeTraded && f.live && marketOpen()) {
-      return { nav: f.live.price, chg: f.live.chg, label: '盘中实时 ' + f.live.time, intraday: true, live: true };
+    var navUpdated = (f.lastDate === todayStr());
+    var trading = marketOpen();
+    if (navUpdated) {
+      return { nav: f.lastNav, chg: f.lastChg, chgToday: f.lastChg, label: '真实净值 ' + f.lastDate, real: true, estimate: false, live: false, navUpdated: true };
     }
-    // 场外开放基金且处于交易时段：返回新浪盘中实时估值
-    if (f.estimate && marketOpen()) {
-      return { nav: f.estimate.nav, chg: f.estimate.chg, label: '盘中估值 ' + f.estimate.time, intraday: true, live: true };
+    if (f.exchangeTraded && f.live && f.live.date === todayStr()) {
+      return {
+        nav: f.live.price, chg: f.live.chg, chgToday: f.live.chg,
+        label: trading ? ('盘中实时 ' + f.live.time) : '收盘 ' + (f.live.time || '15:00') + '（真实）',
+        real: true, estimate: false, live: true, navUpdated: false
+      };
     }
-    return { nav: f.lastNav, chg: f.lastChg, label: f.lastDate ? ('最新净值 ' + f.lastDate) : '暂无净值', intraday: false, live: false };
+    if (f.estimate && f.estimate.date === todayStr()) {
+      return {
+        nav: f.estimate.nav, chg: f.estimate.chg, chgToday: f.estimate.chg,
+        label: trading ? ('盘中估值 ' + f.estimate.time) : '收盘估值(预估) 15:00',
+        real: false, estimate: true, live: trading, navUpdated: false
+      };
+    }
+    return { nav: f.lastNav, chg: f.lastChg, chgToday: null, label: f.lastDate ? ('最新净值 ' + f.lastDate) : '暂无净值', real: false, estimate: false, live: false, navUpdated: false };
   }
   function holdingOf(f) {
     if (!(f.shares > 0)) return null;
@@ -239,14 +256,11 @@
     return { shares: f.shares, cost: cost, marketValue: mv, profit: profit, profitPct: pct };
   }
 
-  // 当前估值口径（用于首页/收益汇总标签）：交易时段且有实时数据→“盘中估值”，否则“最新净值”
+  // 当前估值口径（用于首页/收益汇总标签）
   function currentValLabel() {
-    if (!marketOpen()) return '按最新净值';
-    var has = Object.keys(state.funds).some(function (k) {
-      var f = state.funds[k];
-      return (f.exchangeTraded && f.live) || (f.estimate && marketOpen());
-    });
-    return has ? '按盘中估值' : '按最新净值';
+    if (marketOpen()) return '盘中实时';
+    var anyReal = Object.keys(state.funds).some(function (k) { return state.funds[k].lastDate === todayStr(); });
+    return anyReal ? '今日真实净值' : '收盘估值(预估)';
   }
   // 汇总某范围内持仓基金的“按当前估值”收益（holdingOf 已用 displayOf 当前估值）
   function sumHold(codes) {
@@ -258,23 +272,25 @@
     });
     return { profit: profit, mv: mv, cost: cost, count: count };
   }
-  // 单只基金的“今日预估收益”：份额 × 当前估值 × (今日涨跌幅%/100)
-  // 依赖 displayOf 的 chg（盘中=新浪/腾讯今日涨跌，非盘=确认净值今日涨跌，均相对昨收）
+  // 单只基金的“今日收益”：份额 × 当前价值 × (今日涨跌幅%/100)
+  // 用 displayOf 的 chgToday（今日口径：真实净值 or 估值 or 收盘价）；无法判定今日时返回 null
   function todayProfitOf(f) {
     if (!(f.shares > 0)) return null;
     var h = holdingOf(f); if (!h) return null;
     var d = displayOf(f);
-    return h.marketValue * ((d.chg || 0) / 100);
+    if (d.chgToday == null) return null;
+    return h.marketValue * (d.chgToday / 100);
   }
-  // 汇总某范围「截止当前估值的今日预估收益」
+  // 汇总某范围「截止当前口径的今日收益」（真实净值 or 收盘估值）
   function sumToday(codes) {
     var profit = 0, mv = 0, prevMv = 0, count = 0;
     codes.forEach(function (code) {
       var f = state.funds[code]; if (!f || !(f.shares > 0)) return;
       var h = holdingOf(f); if (!h) return;
-      var d = displayOf(f), tp = h.marketValue * ((d.chg || 0) / 100);
+      var d = displayOf(f), ch = d.chgToday == null ? 0 : d.chgToday;
+      var tp = h.marketValue * (ch / 100);
       profit += tp; mv += h.marketValue;
-      prevMv += h.marketValue / (1 + (d.chg || 0) / 100);
+      prevMv += h.marketValue / (1 + ch / 100);
       count++;
     });
     return { profit: profit, mv: mv, prevMv: prevMv, count: count };
@@ -302,16 +318,17 @@
         // pingzhongdata 失败时，用新浪确认净值兜底
         f2.lastNav = sn.nav; f2.lastChg = sn.chg; f2.lastDate = sn.date;
       }
-      var liveP = f2.exchangeTraded ? fetchLiveETF(code) : Promise.resolve(null);
-      return liveP.then(function (live) {
-        var f3 = state.funds[code]; if (!f3) return;
-        // 仅交易时段保留实时价/盘中估值；非交易时段回落到最新净值
-        f3.live = (live && marketOpen()) ? live : null;
-        f3.estimate = (sn && sn.estimate && marketOpen()) ? sn.estimate : null;
-        f3.estimateCurve = (sn && sn.curve && sn.curve.length >= 2 && marketOpen()) ? sn.curve : null;
-        f3.updatedAt = Date.now(); save();
-        if (ui.view === 'home' || ui.view === 'detail' || ui.view === 'portfolio') render();
-      });
+        var liveP = f2.exchangeTraded ? fetchLiveETF(code) : Promise.resolve(null);
+        return liveP.then(function (live) {
+          var f3 = state.funds[code]; if (!f3) return;
+          // 实时价/盘中估值：交易时段=实时；收盘后保留“当日收盘”数据（带日期），直到今日净值更新。
+          // 仅当本次成功取到且为今日数据时才覆盖；取失败则保留上一次的值。
+          if (live && live.date === todayStr()) f3.live = live;
+          if (sn && sn.estimate && sn.estimate.date === todayStr()) f3.estimate = sn.estimate;
+          if (sn && sn.curve && sn.curve.length >= 2) f3.estimateCurve = sn.curve;
+          f3.updatedAt = Date.now(); save();
+          if (ui.view === 'home' || ui.view === 'detail' || ui.view === 'portfolio') render();
+        });
     }).catch(function () {});
   }
 
@@ -409,19 +426,22 @@
     });
     html += '<button class="gtab add" data-act="newGroup">＋分组</button>';
     html += '</div>';
-    html += '<div class="info-note">首页主数字<b>优先显示实时估值</b>：场外基金盘中=新浪实时估值 · 场内基金(ETF/LOF)=腾讯实时价（点右上角“i”查看数据说明）</div>';
+    html += '<div class="info-note">首页主数字：交易时段=<b>盘中实时估值</b> · 收盘后至净值更新前=<b>15:00 收盘预估</b> · <b>净值更新后显示真实收益</b>（徽标区分 实时/盘中/收盘预估/真实净值）</div>';
 
-    // 当前范围「截止当前估值的今日预估收益」（全部=所有基金；分组=该组）
+    // 当前范围「截止当前口径的今日收益」（真实净值 or 收盘估值）
     var sc = scopeCodes();
     var sum = sumToday(sc);
-    var scopeLabel = ui.filter === '全部' ? '全部今日预估收益' : ('「' + ui.filter + '」今日预估收益');
+    var scopeLabel = ui.filter === '全部' ? '全部今日收益' : ('「' + ui.filter + '」今日收益');
     var vlabel = currentValLabel();
+    var sbMap = { '盘中实时': { t: '实时', c: 'live' }, '今日真实净值': { t: '真实净值', c: 'real' }, '收盘估值(预估)': { t: '收盘预估', c: 'est' } };
+    var sb2 = sbMap[vlabel];
+    var scopeBadge = sb2 ? '<span class="state-badge ' + sb2.c + '">' + sb2.t + '</span>' : '';
     html += '<div class="section-h">' + esc(scopeLabel) + '（' + vlabel + '）</div>';
     if (sum.count > 0) {
       var pc = colorClass(sum.profit), ppct = sum.prevMv > 0 ? sum.profit / sum.prevMv * 100 : 0;
-      html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</div></div></div>';
+      html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="pf-right"><span class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</span>' + scopeBadge + '</div></div></div>';
     } else {
-      html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示按' + vlabel + '计算的今日预估收益</div>';
+      html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示按' + vlabel + '计算的今日收益</div>';
     }
 
     html += toolbarHTML();
@@ -439,17 +459,34 @@
 
   function emptyMini() { return '<div class="empty" style="padding:30px 10px">该分组暂无基金</div>'; }
 
+  // 状态徽标：区分 真实净值 / 真实(场内收盘) / 实时(场内盘中) / 盘中(场外估值) / 收盘预估(场外)
+  function stateBadge(d) {
+    if (d.navUpdated) return { t: '真实净值', c: 'real' };
+    if (d.real && d.live) return { t: '实时', c: 'live' };
+    if (d.real && !d.live) return { t: '真实', c: 'real' };
+    if (d.estimate && d.live) return { t: '盘中', c: 'live' };
+    if (d.estimate) return { t: '收盘预估', c: 'est' };
+    return null;
+  }
+
   function cardHTML(f) {
     var d = displayOf(f), c = colorClass(d.chg), h = holdingOf(f);
     var grp = f.group ? '<span class="grp-tag">' + esc(f.group) + '</span>' : '';
-    var liveBadge = d.live ? '<span class="live-badge">' + (f.exchangeTraded ? '实时' : '盘中') + '</span>' : '';
-    // 主页卡片主数字优先展示“今日预估收益金额”，无持仓时 fallback 为涨跌幅
+    var sb = stateBadge(d);
+    var badge = sb ? '<span class="state-badge ' + sb.c + '">' + sb.t + '</span>' : '';
+    // 主页卡片主数字：有持仓且能算“今日”口径 → 今日收益；否则 fallback 涨跌幅
     var mainVal, mainCls, mainLabel;
     if (h) {
-      var tp = todayProfitOf(f) || 0;
-      mainVal = (tp >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(tp), 0);
-      mainCls = tp >= 0 ? 'up' : 'down';
-      mainLabel = '今日预估收益';
+      var tp = todayProfitOf(f);
+      if (tp != null) {
+        mainVal = (tp >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(tp), 0);
+        mainCls = tp >= 0 ? 'up' : 'down';
+        mainLabel = d.real ? '今日收益（真实）' : (d.live ? '今日预估（盘中）' : '今日预估（收盘）');
+      } else {
+        mainVal = sign(d.chg) + fmt(d.chg, 2) + '%';
+        mainCls = c;
+        mainLabel = d.label;
+      }
     } else {
       mainVal = sign(d.chg) + fmt(d.chg, 2) + '%';
       mainCls = c;
@@ -458,7 +495,7 @@
     return '<div class="fcard" data-act="open" data-code="' + f.code + '">' +
       '<button class="del" data-act="del" data-code="' + f.code + '" title="删除">✕</button>' +
       '<div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + (f.exchangeTraded ? ' · 场内' : '') + '</div></div>' +
-      '<div class="val"><div class="v ' + mainCls + '">' + mainVal + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div>' + liveBadge + '</div></div>' +
+      '<div class="val"><div class="v ' + mainCls + '">' + mainVal + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div>' + badge + '</div></div>' +
       '<div class="bot"><span>' + esc(mainLabel) + '</span></div>' + grp +
       '</div>';
   }
@@ -501,31 +538,45 @@
     var f = code ? state.funds[code] : null;
     if (!f) return '<div class="empty"><div class="big">📈</div>选择一只基金查看详情</div>';
     var d = displayOf(f), c = colorClass(d.chg), h = holdingOf(f);
+    var sb = stateBadge(d);
+    var dBadge = sb ? '<span class="state-badge ' + sb.c + '">' + sb.t + '</span>' : '';
     var color = d.chg >= 0 ? '#EE2B3B' : '#0CA678';
     var nav = d.nav || 0;
     var groupsOpts = state.groups.map(function (g) { return '<option value="' + esc(g) + '" ' + ((f.group || '') === g ? 'selected' : '') + '>' + esc(g) + '</option>'; }).join('');
     var hasCurve = f.estimateCurve && f.estimateCurve.length >= 2;
     var spark = sparkSVG(hasCurve ? f.estimateCurve : f.history, 300, 140, color, hasCurve ? { timeField: 'time' } : null);
-    var curveLabel = hasCurve ? '今日盘中估值曲线（新浪）' : '历史净值走势';
+    var curveLabel = hasCurve ? (marketOpen() ? '今日盘中估值曲线（新浪）' : '今日估值曲线（新浪·至15:00）') : '历史净值走势';
 
     var html = '<div class="detail-wrap">';
     html += '<div class="detail-head"><div><div style="font-weight:700;font-size:16px">' + esc(f.name || f.code) + '</div><div style="font-size:12px;color:var(--sub)">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + '</div></div>';
     html += '<button class="icon-btn" data-act="back" style="background:transparent">✕</button></div>';
-    html += '<div class="detail-big ' + c + '">' + fmt(nav) + '</div><div class="detail-ch"><span class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</span> <span style="font-size:12.5px;color:var(--sub);font-weight:600">' + esc(d.label) + '</span></div>';
-    if (f.estimate && marketOpen()) {
+    html += '<div class="detail-big ' + c + '">' + fmt(nav) + '</div><div class="detail-ch"><span class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</span> ' + dBadge + ' <span style="font-size:12.5px;color:var(--sub);font-weight:600">' + esc(d.label) + '</span></div>';
+    if (d.navUpdated) {
+      html += '<div class="est-note real">今日真实净值已更新（东财 ' + esc(f.lastDate) + '）· 以上为真实收益</div>';
+    } else if (d.estimate) {
       var e = f.estimate;
-      html += '<div class="est-note">盘中估值（新浪）：' + fmt(e.nav) + ' · ' + arrow(e.chg) + ' ' + sign(e.chg) + fmt(e.chg, 2) + '% @ ' + esc(e.time) + '</div>';
+      var tag = marketOpen() ? '盘中估值（新浪预估）' : '收盘估值（新浪预估·15:00）';
+      html += '<div class="est-note">' + tag + '：' + fmt(e.nav) + ' · ' + arrow(e.chg) + ' ' + sign(e.chg) + fmt(e.chg, 2) + '%' + (marketOpen() ? (' @ ' + esc(e.time)) : '') + '</div>';
       if (e.chg2 != null && Math.abs(e.chg2 - e.chg) > 0.3) {
         html += '<div class="est-alt">另一口径：' + fmt(e.nav2) + ' · ' + fmt(e.chg2, 2) + '%</div>';
       }
+    } else if (d.real && !d.live) {
+      html += '<div class="est-note real">收盘真实价（腾讯 ' + esc(f.live.time) + '）· 今日真实收益</div>';
     }
     html += '<div class="curve-label">' + curveLabel + '</div>';
     html += spark;
     html += '<label class="et-toggle"><input type="checkbox" id="chkET" data-code="' + f.code + '" ' + (f.exchangeTraded ? 'checked' : '') + '/> 场内基金（ETF / LOF，显示盘中实时价）</label>';
     html += '<div>';
-    html += kv('净值日期', f.lastDate || '—');
+    html += kv('净值日期', (f.lastDate || '—') + (f.lastDate === todayStr() ? '（今日·真实）' : ''));
     html += kv('当前市值', h ? ('¥' + fmt(h.marketValue, 2)) : '未设置持仓');
     if (h) html += kv('持仓收益', '<span class="' + (h.profit >= 0 ? 'up' : 'down') + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(h.profit, 2) + ' (' + (h.profit >= 0 ? '+' : '') + fmt(h.profitPct, 2) + '%)</span>');
+    var tp = todayProfitOf(f);
+    if (tp != null) {
+      var tcls = tp >= 0 ? 'up' : 'down';
+      var tsb = stateBadge(displayOf(f));
+      var tbadge = tsb ? ' <span class="state-badge ' + tsb.c + '">' + tsb.t + '</span>' : '';
+      html += kv('今日收益', '<span class="' + tcls + '">' + (tp >= 0 ? '+' : '') + '¥' + fmt(tp, 2) + '</span>' + tbadge);
+    }
     html += '</div>';
     // 持仓编辑
     html += '<div class="hold-edit"><div style="font-weight:700;margin-bottom:4px">持仓设置</div>';
@@ -605,6 +656,14 @@
       html += '<button class="gact" data-act="renameGroup" data-g="' + esc(g) + '">✎</button><button class="gact del" data-act="delGroup" data-g="' + esc(g) + '">🗑</button></div>';
     });
     html += '<button class="btn btn-primary" data-act="newGroup" style="margin-top:14px">＋ 新建分组</button>';
+    // 数据导入导出（Excel）
+    html += '<div class="section-h">数据导入导出（Excel）</div>';
+    html += '<div class="io-note">表格列：<b>分组 · 基金代码 · 基金名称(可留空) · 成本价 · 持有份额</b>。导入按“基金代码”合并更新，不会删除已有基金；名称留空会自动联网获取。</div>';
+    html += '<div class="io-btns">' +
+      '<button class="btn btn-primary" data-act="exportExcel">导出 Excel</button>' +
+      '<button class="btn btn-ghost" data-act="exportTemplate">下载空白模板</button>' +
+      '<button class="btn btn-ghost" data-act="pickExcel">导入 Excel</button>' +
+      '</div>';
     view.innerHTML = html;
   }
 
@@ -731,7 +790,112 @@
     infoModal('<p>数据来自东方财富、腾讯、新浪的公开接口（跨域脚本/JSONP 注入获取，纯前端、无后端、无账号）。</p>' +
       '<p><b>场外开放基金</b>：用<b>新浪盘中估值曲线</b>展示交易时段的<b>实时估值</b>（逐分钟更新，带今日时间戳）；非交易时段回落到最新确认净值 + 历史走势。天天基金 fundgz 接口已于 2026 年停用，已由新浪替代。</p>' +
       '<p><b>场内基金（ETF / LOF）</b>：用腾讯实时行情展示<b>盘中实时价</b>（即实时市价，比估算更准）。添加时按代码段自动识别；也可在详情页手动开关“场内基金”。</p>' +
-      '<p>新浪估值有两个口径，差异较大时详情页会并列提示。实时价 / 估值 ≠ 官方净值，仅供参考，不构成投资建议。</p>');
+      '<p>新浪估值有两个口径，差异较大时详情页会并列提示。实时价 / 估值 ≠ 官方净值，仅供参考，不构成投资建议。</p>' +
+      '<p><b>状态区分（徽标）</b>：<span style="color:#0CA678;font-weight:700">实时/盘中</span>=交易时段估值；<span style="color:#B45309;font-weight:700">收盘预估</span>=15:00 收盘估值（净值更新前）；<span style="color:#4F46E5;font-weight:700">真实净值/真实</span>=今日官方净值已更新（东财）或场内收盘价。净值更新后主数字为真实收益。</p>');
+  }
+
+  // ---------------- Excel 导入导出（SheetJS，同源加载，离线可缓存） ----------------
+  // 表格列：分组 / 基金代码 / 基金名称(可留空) / 成本价 / 持有份额
+  var EXCEL_HEAD = ['分组', '基金代码', '基金名称', '成本价', '持有份额'];
+  function aoaSheet(aoa, name) {
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 26 }, { wch: 12 }, { wch: 12 }];
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, name || '持仓');
+    return wb;
+  }
+  function exportExcel() {
+    if (typeof XLSX === 'undefined') { toast('Excel 组件未加载，请刷新重试'); return; }
+    var codes = Object.keys(state.funds).sort(function (a, b) {
+      var ga = (state.funds[a].group || ''), gb = (state.funds[b].group || '');
+      if (ga !== gb) return ga < gb ? -1 : 1;
+      return a < b ? -1 : 1;
+    });
+    var aoa = [EXCEL_HEAD.slice()];
+    codes.forEach(function (code) {
+      var f = state.funds[code];
+      aoa.push([f.group || '', code, f.name || '', f.costPrice || 0, f.shares || 0]);
+    });
+    XLSX.writeFile(aoaSheet(aoa, '持仓'), '估值宝_持仓_' + todayStr() + '.xlsx');
+    toast('已导出 ' + codes.length + ' 只基金');
+  }
+  function exportTemplate() {
+    if (typeof XLSX === 'undefined') { toast('Excel 组件未加载，请刷新重试'); return; }
+    var aoa = [
+      EXCEL_HEAD.slice(),
+      ['示例组', '110011', '易方达中小盘（名称可留空）', 1.0000, 1000],
+      ['', '005827', '', 2.5000, 500]
+    ];
+    XLSX.writeFile(aoaSheet(aoa, '模板'), '估值宝_持仓模板.xlsx');
+    toast('已下载空白模板');
+  }
+  function importExcel(file) {
+    if (typeof XLSX === 'undefined') { toast('Excel 组件未加载，请刷新重试'); return; }
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        var wb = XLSX.read(e.target.result, { type: 'binary' });
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
+        processExcelRows(rows);
+      } catch (err) {
+        toast('导入失败：文件格式不支持');
+      }
+    };
+    reader.readAsBinaryString(file);
+  }
+  function processExcelRows(rows) {
+    var headerIdx = -1, header = null;
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (r && r.some(function (c) { return ('' + c).indexOf('基金代码') >= 0; })) { headerIdx = i; header = r; break; }
+    }
+    if (headerIdx < 0) { toast('未找到表头（需含“基金代码”列）'); return; }
+    var idx = function (names) {
+      for (var j = 0; j < header.length; j++) {
+        var h = ('' + header[j]).trim();
+        for (var k = 0; k < names.length; k++) if (h === names[k]) return j;
+      }
+      return -1;
+    };
+    var ci = idx(['基金代码', '代码', 'code']);
+    var gi = idx(['分组', '组', 'group']);
+    var ni = idx(['基金名称', '名称', 'name']);
+    var coi = idx(['成本价', '成本', 'cost']);
+    var si = idx(['持有份额', '份额', 'shares']);
+    if (ci < 0) { toast('表头缺少“基金代码”列'); return; }
+    var added = 0, updated = 0;
+    for (var i = headerIdx + 1; i < rows.length; i++) {
+      var row = rows[i]; if (!row) continue;
+      var code = ('' + (row[ci] || '')).replace(/\s/g, '');
+      if (!code) continue;
+      var group = gi >= 0 ? ('' + (row[gi] || '')).trim() : '';
+      var name = ni >= 0 ? ('' + (row[ni] || '')).trim() : '';
+      var cost = coi >= 0 ? parseFloat(row[coi]) : NaN;
+      var shares = si >= 0 ? parseFloat(row[si]) : NaN;
+      var f = state.funds[code];
+      if (!f) {
+        if (!state.defaultGroup && group) state.defaultGroup = group;
+        if (group && state.groups.indexOf(group) < 0) state.groups.push(group);
+        state.funds[code] = {
+          code: code, name: name, type: '',
+          exchangeTraded: isETFPrefix(code),
+          group: group, shares: isNaN(shares) ? 0 : shares, costPrice: isNaN(cost) ? 0 : cost,
+          history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, estimate: null, updatedAt: 0
+        };
+        added++;
+      } else {
+        if (group) f.group = group;
+        if (!isNaN(cost)) f.costPrice = cost;
+        if (!isNaN(shares)) f.shares = shares;
+        if (name && !f.name) f.name = name;
+        updated++;
+      }
+    }
+    save();
+    toast('导入完成：新增 ' + added + ' 只，更新 ' + updated + ' 只');
+    refreshAll();
+    render();
   }
   var toastTimer = null;
   function toast(msg) {
@@ -764,6 +928,9 @@
         case 'toggleCompact': ui.compact = !ui.compact; save(); render(); break;
         case 'toggleCompactSheet': ui.compact = !ui.compact; save(); render(); openSortSheet(); break;
         case 'closeSheet': if ($('#modalRoot')) $('#modalRoot').innerHTML = ''; break;
+        case 'exportExcel': exportExcel(); break;
+        case 'exportTemplate': exportTemplate(); break;
+        case 'pickExcel': var fi = document.getElementById('fileExcel'); if (fi) fi.click(); break;
       }
       return;
     }
@@ -799,6 +966,16 @@
     document.addEventListener('click', onClick);
     document.addEventListener('input', onInput);
     document.addEventListener('change', onChange);
+    // Excel 导入：常驻隐藏文件选择框 + 监听
+    var fileInput = document.createElement('input');
+    fileInput.type = 'file'; fileInput.id = 'fileExcel';
+    fileInput.accept = '.xlsx,.xls,.csv'; fileInput.style.display = 'none';
+    document.body.appendChild(fileInput);
+    fileInput.addEventListener('change', function (e) {
+      var file = e.target.files && e.target.files[0];
+      if (file) importExcel(file);
+      e.target.value = ''; // 允许重复导入同一文件
+    });
     window.addEventListener('resize', function () {
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
