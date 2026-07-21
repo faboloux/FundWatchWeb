@@ -263,11 +263,11 @@ body{
 .view.compact .fcard:not(.pf) .nm{font-size:13.5px;line-height:1.25;max-width:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 简洁模式隐藏代码/类型，详情页再看；名称可获得最大宽度 */
 .view.compact .fcard:not(.pf) .cd{display:none}
-/* 右侧三元素横排并对齐 */
-.view.compact .fcard:not(.pf) .val{display:flex;flex-direction:row;align-items:center;gap:5px;text-align:left;flex-wrap:nowrap}
-.view.compact .fcard:not(.pf) .v{font-size:15px;line-height:1;letter-spacing:0}
-.view.compact .fcard:not(.pf) .chg-pill{font-size:9.5px;padding:2px 5px;border-radius:7px}
-.view.compact .fcard:not(.pf) .state-badge{margin-top:0;padding:2px 5px;font-size:8.5px}
+/* 右侧三元素横排并对齐：固定列宽 + 整体靠右，保证跨卡片数字对齐 */
+.view.compact .fcard:not(.pf) .val{display:flex;flex-direction:row;align-items:center;justify-content:flex-end;gap:6px;flex:0 0 auto;flex-wrap:nowrap;text-align:right}
+.view.compact .fcard:not(.pf) .v{font-size:15px;line-height:1;letter-spacing:0;min-width:64px;text-align:right;font-variant-numeric:tabular-nums}
+.view.compact .fcard:not(.pf) .chg-pill{font-size:9.5px;padding:2px 5px;border-radius:7px;min-width:54px;text-align:center;justify-content:center;font-variant-numeric:tabular-nums;white-space:nowrap}
+.view.compact .fcard:not(.pf) .state-badge{margin-top:0;padding:2px 5px;font-size:8.5px;min-width:48px;text-align:center;white-space:nowrap}
 .view.compact .fcard:not(.pf) .bot{display:none}
 .view.compact .fcard:not(.pf) .grp-tag{display:none}
 .view.compact .fcard:not(.pf) .del{width:18px;height:18px;top:4px;right:4px;font-size:11px;opacity:.4}
@@ -410,6 +410,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           Object.keys(state.funds).forEach(function (k) {
             var f = state.funds[k];
             if (f.exchangeTraded == null) f.exchangeTraded = false;
+          // 本应用仅支持场外基金，强制按场外处理（重置历史遗留的场内标记）
+          f.exchangeTraded = false;
             if (f.live == null) f.live = null;
             if (f.estimate == null) f.estimate = null;
           });
@@ -479,33 +481,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       });
   }
 
-  // 场内/场外识别：用代码段判定（ETF/LOF/封基 占用专用号段 15/16/50/51/58，
-  // 股票不会占用这些号段，因此不存在“基金代码撞股票代码”的误判；比名称匹配更稳）。
-  function mktOf(code) { return /^[56]/.test(code) ? 'sh' : 'sz'; }
-  function isETFPrefix(code) { return /^(15|16|50|51|58)/.test(code || ''); }
-  function detectExchangeTraded(code) {
-    return Promise.resolve(isETFPrefix(code));
-  }
-  // 场内基金实时行情（腾讯，跨域<script>可用，无需 Referer）
-  function fetchLiveETF(code) {
-    var mkt = mktOf(code);
-    return injectScript('https://qt.gtimg.cn/q=' + mkt + code + '&_=' + Date.now())
-      .then(function (ok) {
-        if (ok !== 'ok') return null;
-        var raw = window['v_' + mkt + code];
-        if (!raw) return null;
-        var f = raw.split('~');
-        var price = parseFloat(f[3]), prev = parseFloat(f[4]);
-        if (isNaN(price) || isNaN(prev) || prev <= 0) return null;
-        var chg = (price - prev) / prev * 100;
-        var ts = '';
-        for (var i = f.length - 1; i >= 0; i--) {
-          if (/^\d{14}$/.test(f[i] || '')) { var s = f[i] + ''; ts = s.slice(8, 10) + ':' + s.slice(10, 12); break; }
-        }
-        return { price: price, chg: chg, time: ts || nowHM(), name: f[1], date: todayStr() };
-      })
-      .catch(function () { return null; });
-  }
+  // 本应用所有基金均为场外开放基金，统一走新浪盘中估值 + 东财确认净值两条数据源，
+  // 不再保留场内(ETF/LOF)的腾讯实时行情逻辑。
 
   // 新浪盘中估值曲线（JSONP 跨域，无需 Referer / CORS）。
   // 端点：stock.finance.sina.com.cn/fundInfo/api/openapi.php/FdFundService.getEstimateNetworthPic?symbol={code}
@@ -602,13 +579,6 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     if (navUpdated) {
       return { nav: f.lastNav, chg: f.lastChg, chgToday: f.lastChg, label: '真实净值 ' + f.lastDate, real: true, estimate: false, live: false, navUpdated: true };
     }
-    if (f.exchangeTraded && f.live && f.live.date === todayStr()) {
-      return {
-        nav: f.live.price, chg: f.live.chg, chgToday: f.live.chg,
-        label: trading ? ('盘中实时 ' + f.live.time) : '收盘 ' + (f.live.time || '15:00') + '（真实）',
-        real: true, estimate: false, live: true, navUpdated: false
-      };
-    }
     if (f.estimate && f.estimate.date === todayStr()) {
       return {
         nav: f.estimate.nav, chg: f.estimate.chg, chgToday: f.estimate.chg,
@@ -677,7 +647,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var f = state.funds[code]; if (!f) return Promise.resolve();
     // 场内：腾讯实时价；场外：新浪盘中估值（JSONP）。两者并行取。
     var pPing = fetchPingzhong(code);
-    var pSina = f.exchangeTraded ? Promise.resolve(null) : fetchSinaEstimate(code);
+    var pSina = fetchSinaEstimate(code);
     return Promise.all([pPing, pSina]).then(function (rs) {
       var f2 = state.funds[code]; if (!f2) return;
       var pd = rs[0], sn = rs[1];
@@ -688,17 +658,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         // pingzhongdata 失败时，用新浪确认净值兜底
         f2.lastNav = sn.nav; f2.lastChg = sn.chg; f2.lastDate = sn.date;
       }
-        var liveP = f2.exchangeTraded ? fetchLiveETF(code) : Promise.resolve(null);
-        return liveP.then(function (live) {
-          var f3 = state.funds[code]; if (!f3) return;
-          // 实时价/盘中估值：交易时段=实时；收盘后保留“当日收盘”数据（带日期），直到今日净值更新。
-          // 仅当本次成功取到且为今日数据时才覆盖；取失败则保留上一次的值。
-          if (live && live.date === todayStr()) f3.live = live;
-          if (sn && sn.estimate && sn.estimate.date === todayStr()) f3.estimate = sn.estimate;
-          if (sn && sn.curve && sn.curve.length >= 2) f3.estimateCurve = sn.curve;
-          f3.updatedAt = Date.now(); save();
-          if (ui.view === 'home' || ui.view === 'detail' || ui.view === 'portfolio') render();
-        });
+      // 新浪盘中估值：交易时段=盘中估算；收盘后保留“15:00 收盘预估”（带日期），直到今日净值更新。
+      // 仅当本次成功取到且为今日数据时才覆盖；取失败则保留上一次的值。
+      if (sn && sn.estimate && sn.estimate.date === todayStr()) f2.estimate = sn.estimate;
+      if (sn && sn.curve && sn.curve.length >= 2) f2.estimateCurve = sn.curve;
+      f2.updatedAt = Date.now(); save();
+      if (ui.view === 'home' || ui.view === 'detail' || ui.view === 'portfolio') render();
     }).catch(function () {});
   }
 
@@ -829,11 +794,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   function emptyMini() { return '<div class="empty" style="padding:30px 10px">该分组暂无基金</div>'; }
 
-  // 状态徽标：区分 真实净值 / 真实(场内收盘) / 实时(场内盘中) / 盘中(场外估值) / 收盘预估(场外)
+  // 状态徽标：真实净值 / 盘中(新浪估值·交易中) / 收盘预估(新浪估值·15:00)
   function stateBadge(d) {
     if (d.navUpdated) return { t: '真实净值', c: 'real' };
-    if (d.real && d.live) return { t: '实时', c: 'live' };
-    if (d.real && !d.live) return { t: '真实', c: 'real' };
     if (d.estimate && d.live) return { t: '盘中', c: 'live' };
     if (d.estimate) return { t: '收盘预估', c: 'est' };
     return null;
@@ -864,7 +827,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     }
     return '<div class="fcard" data-act="open" data-code="' + f.code + '">' +
       '<button class="del" data-act="del" data-code="' + f.code + '" title="删除">✕</button>' +
-      '<div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + (f.exchangeTraded ? ' · 场内' : '') + '</div></div>' +
+      '<div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + '</div></div>' +
       '<div class="val"><div class="v ' + mainCls + '">' + mainVal + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div>' + badge + '</div></div>' +
       '<div class="bot"><span>' + esc(mainLabel) + '</span></div>' + grp +
       '</div>';
@@ -930,12 +893,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       if (e.chg2 != null && Math.abs(e.chg2 - e.chg) > 0.3) {
         html += '<div class="est-alt">另一口径：' + fmt(e.nav2) + ' · ' + fmt(e.chg2, 2) + '%</div>';
       }
-    } else if (d.real && !d.live) {
-      html += '<div class="est-note real">收盘真实价（腾讯 ' + esc(f.live.time) + '）· 今日真实收益</div>';
     }
     html += '<div class="curve-label">' + curveLabel + '</div>';
     html += spark;
-    html += '<label class="et-toggle"><input type="checkbox" id="chkET" data-code="' + f.code + '" ' + (f.exchangeTraded ? 'checked' : '') + '/> 场内基金（ETF / LOF，显示盘中实时价）</label>';
     html += '<div>';
     html += kv('净值日期', (f.lastDate || '—') + (f.lastDate === todayStr() ? '（今日·真实）' : ''));
     html += kv('当前市值', h ? ('¥' + fmt(h.marketValue, 2)) : '未设置持仓');
@@ -1052,18 +1012,16 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var r = ui.searchResults.filter(function (x) { return x.code === code; })[0] || { code: code, name: '', type: '' };
     var name = r.name || code;
     toast('正在添加…');
-    detectExchangeTraded(code).then(function (isET) {
-      if (state.funds[code]) return; // 重复点击防护
-      state.funds[code] = {
-        code: code, name: name, type: r.type || '',
-        exchangeTraded: !!isET,
-        group: ui.searchTargets[code] || '', shares: 0, costPrice: 0,
-        history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, estimate: null, updatedAt: 0
-      };
-      save(); render();
-      toast((isET ? '已识别为场内(实时) · ' : '') + '已添加 ' + name);
-      refreshOne(code);
-    });
+    if (state.funds[code]) return; // 重复点击防护
+    state.funds[code] = {
+      code: code, name: name, type: r.type || '',
+      exchangeTraded: false,
+      group: ui.searchTargets[code] || '', shares: 0, costPrice: 0,
+      history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, estimate: null, updatedAt: 0
+    };
+    save(); render();
+    toast('已添加 ' + name);
+    refreshOne(code);
   }
   function deleteFund(code) {
     delete state.funds[code];
@@ -1253,7 +1211,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         if (group && state.groups.indexOf(group) < 0) state.groups.push(group);
         state.funds[code] = {
           code: code, name: name, type: '',
-          exchangeTraded: isETFPrefix(code),
+          exchangeTraded: false,
           group: group, shares: isNaN(shares) ? 0 : shares, costPrice: isNaN(cost) ? 0 : cost,
           history: [], lastNav: null, lastChg: 0, lastDate: '', live: null, estimate: null, updatedAt: 0
         };
@@ -1319,11 +1277,6 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
   function onChange(e) {
     if (e.target.id === 'selGroup') { moveGroup(e.target.dataset.code, e.target.value); return; }
-    if (e.target.id === 'chkET') {
-      var f = state.funds[e.target.dataset.code]; if (!f) return;
-      f.exchangeTraded = e.target.checked; save(); render();
-      if (e.target.checked) refreshOne(e.target.dataset.code);
-    }
   }
 
   // ---------------- 宽屏检测 ----------------
@@ -1354,7 +1307,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=6').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=7').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
