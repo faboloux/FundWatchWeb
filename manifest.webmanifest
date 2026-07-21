@@ -1,0 +1,13 @@
+{
+  "name": "估值宝 · 基金估值",
+  "short_name": "估值宝",
+  "description": "基金净值/估值查看（自用）",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4F6F9",
+  "theme_color": "#E23A3A",
+  "lang": "zh-CN",
+  "icons": []
+}
