@@ -407,12 +407,29 @@
   }
 
   // ---------------- 渲染：详情 ----------------
-  function sparkSVG(history, w, h, color) {
+  // 交易时间轴映射：9:30–11:30 → 左半；13:00–15:00 → 右半（午休折叠）
+  function timeToMin(t) {
+    if (!t) return 0;
+    var p = ('' + t).split(':');
+    var hh = parseInt(p[0], 10) || 0, mm = parseInt(p[1], 10) || 0;
+    return hh * 60 + mm;
+  }
+  function timeToX(m, w) {
+    if (m <= 690) return ((m - 570) / 120) * (w * 0.5);          // 9:30–11:30
+    if (m >= 780) return w * 0.5 + ((m - 780) / 120) * (w * 0.5); // 13:00–15:00
+    return w * 0.5; // 午休段（数据一般不含）
+  }
+  function sparkSVG(history, w, h, color, opts) {
+    opts = opts || {};
     if (!history || history.length < 2) return '<div class="spark" style="display:flex;align-items:center;justify-content:center;color:var(--sub);font-size:13px">暂无足够历史数据</div>';
     var vals = history.map(function (p) { return p.nav; });
     var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
     var rng = (max - min) || 1, n = vals.length;
-    var pts = vals.map(function (v, i) { var x = (i / (n - 1)) * w; var y = h - ((v - min) / rng) * (h - 12) - 6; return x.toFixed(1) + ',' + y.toFixed(1); }).join(' ');
+    var pts = history.map(function (p, i) {
+      var x = (opts.timeField && p[opts.timeField]) ? timeToX(timeToMin(p[opts.timeField]), w) : (i / (n - 1)) * w;
+      var y = h - ((p.nav - min) / rng) * (h - 12) - 6;
+      return x.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
     var area = '0,' + h + ' ' + pts + ' ' + w + ',' + h;
     return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
       '<polygon points="' + area + '" fill="' + color + '22" stroke="none"></polygon>' +
@@ -427,7 +444,7 @@
     var nav = d.nav || 0;
     var groupsOpts = state.groups.map(function (g) { return '<option value="' + esc(g) + '" ' + ((f.group || '') === g ? 'selected' : '') + '>' + esc(g) + '</option>'; }).join('');
     var hasCurve = f.estimateCurve && f.estimateCurve.length >= 2;
-    var spark = sparkSVG(hasCurve ? f.estimateCurve : f.history, 300, 140, color);
+    var spark = sparkSVG(hasCurve ? f.estimateCurve : f.history, 300, 140, color, hasCurve ? { timeField: 'time' } : null);
     var curveLabel = hasCurve ? '今日盘中估值曲线（新浪）' : '历史净值走势';
 
     var html = '<div class="detail-wrap">';
