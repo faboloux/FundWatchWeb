@@ -255,6 +255,27 @@
     });
     return { profit: profit, mv: mv, cost: cost, count: count };
   }
+  // 单只基金的“今日预估收益”：份额 × 当前估值 × (今日涨跌幅%/100)
+  // 依赖 displayOf 的 chg（盘中=新浪/腾讯今日涨跌，非盘=确认净值今日涨跌，均相对昨收）
+  function todayProfitOf(f) {
+    if (!(f.shares > 0)) return null;
+    var h = holdingOf(f); if (!h) return null;
+    var d = displayOf(f);
+    return h.marketValue * ((d.chg || 0) / 100);
+  }
+  // 汇总某范围「截止当前估值的今日预估收益」
+  function sumToday(codes) {
+    var profit = 0, mv = 0, prevMv = 0, count = 0;
+    codes.forEach(function (code) {
+      var f = state.funds[code]; if (!f || !(f.shares > 0)) return;
+      var h = holdingOf(f); if (!h) return;
+      var d = displayOf(f), tp = h.marketValue * ((d.chg || 0) / 100);
+      profit += tp; mv += h.marketValue;
+      prevMv += h.marketValue / (1 + (d.chg || 0) / 100);
+      count++;
+    });
+    return { profit: profit, mv: mv, prevMv: prevMv, count: count };
+  }
   // 当前筛选范围下的基金代码（“全部”=所有；“分组”=该组）
   function scopeCodes() {
     var all = Object.keys(state.funds);
@@ -339,33 +360,33 @@
     // 分组标签栏（每个标签下显示本范围按估值的收益金额）
     html += '<div class="gtabs">';
     var allCodes = Object.keys(state.funds);
-    var allSum = sumHold(allCodes);
+    var allToday = sumToday(allCodes);
     var gtabSub = function (profit, count) {
       if (!count) return '';
       return '<span class="gtab-sub ' + (profit >= 0 ? 'up' : 'down') + '">' + (profit >= 0 ? '+' : '') + '¥' + fmt(Math.abs(profit), 0) + '</span>';
     };
-    html += '<button class="gtab ' + (ui.filter === '全部' ? 'on' : '') + '" data-act="filter" data-g="全部">全部' + gtabSub(allSum.profit, allSum.count) + '</button>';
+    html += '<button class="gtab ' + (ui.filter === '全部' ? 'on' : '') + '" data-act="filter" data-g="全部">全部' + gtabSub(allToday.profit, allToday.count) + '</button>';
     state.groups.forEach(function (g) {
       var gc = allCodes.filter(function (k) { return (state.funds[k].group || '') === g; });
-      var gs = sumHold(gc);
+      var gs = sumToday(gc);
       html += '<button class="gtab ' + (ui.filter === g ? 'on' : '') + '" data-act="filter" data-g="' + esc(g) + '">' + esc(g) + gtabSub(gs.profit, gs.count) + '</button>';
     });
     html += '<button class="gtab add" data-act="newGroup">＋分组</button>';
     html += '</div>';
     html += '<div class="info-note">首页主数字<b>优先显示实时估值</b>：场外基金盘中=新浪实时估值 · 场内基金(ETF/LOF)=腾讯实时价（点右上角“i”查看数据说明）</div>';
 
-    // 当前范围「按当前估值」收益汇总（全部=所有基金；分组=该组）
+    // 当前范围「截止当前估值的今日预估收益」（全部=所有基金；分组=该组）
     var sc = scopeCodes();
-    var sum = sumHold(sc);
-    var scopeLabel = ui.filter === '全部' ? '全部持仓收益' : ('「' + ui.filter + '」分组收益');
+    var sum = sumToday(sc);
+    var scopeLabel = ui.filter === '全部' ? '全部今日预估收益' : ('「' + ui.filter + '」今日预估收益');
     var vlabel = currentValLabel();
     html += '<div class="section-h">' + esc(scopeLabel) + '（' + vlabel + '）</div>';
     if (sum.count > 0) {
-      var pc = colorClass(sum.profit), ppct = sum.cost > 0 ? sum.profit / sum.cost * 100 : 0;
+      var pc = colorClass(sum.profit), ppct = sum.prevMv > 0 ? sum.profit / sum.prevMv * 100 : 0;
       html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</div></div>';
-      html += '<div class="pstats"><div class="ps"><div class="pl">总市值</div><div class="pv">¥' + fmt(sum.mv, 2) + '</div></div><div class="ps"><div class="pl">总成本</div><div class="pv">¥' + fmt(sum.cost, 2) + '</div></div></div></div>';
+      html += '<div class="pstats"><div class="ps"><div class="pl">昨日市值</div><div class="pv">¥' + fmt(sum.prevMv, 2) + '</div></div><div class="ps"><div class="pl">今日估算市值</div><div class="pv">¥' + fmt(sum.mv, 2) + '</div></div></div></div>';
     } else {
-      html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示按' + vlabel + '计算的收益</div>';
+      html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示按' + vlabel + '计算的今日预估收益</div>';
     }
 
     var list = visibleFunds();
