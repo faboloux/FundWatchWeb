@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#EE2B3B" />
+  <title>估值宝 · 基金估值</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部栏 -->
+    <header class="topbar" id="topbar">
+      <div class="brand">
+        <span class="brand-mark">估</span>
+        <span class="tb-title" id="tbTitle">自选基金</span>
+      </div>
+      <div class="tb-actions">
+        <button class="icon-btn add-top" id="btnAddTop" data-act="goAdd" title="添加基金">＋</button>
+        <button class="icon-btn" id="btnInfo" title="数据说明">i</button>
+        <button class="icon-btn" id="btnRefresh" title="刷新">&#8635;</button>
+        <button class="icon-btn" id="btnSettings" title="分组管理">&#9881;</button>
+      </div>
+    </header>
+
+    <!-- 主内容（由 JS 渲染） -->
+    <main id="view" class="view"></main>
+
+    <!-- 底部导航 -->
+    <nav class="bottombar" id="bottombar">
+      <button class="tab active" data-view="home"><span class="ti">&#9733;</span><span>自选</span></button>
+      <button class="tab" data-view="portfolio"><span class="ti">&#165;</span><span>收益</span></button>
+    </nav>
+
+    <!-- 悬浮添加按钮 -->
+    <button class="fab" id="btnAdd" data-act="goAdd" aria-label="添加基金">＋</button>
+  </div>
+
+  <!-- 模态层 -->
+  <div id="modalRoot"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
