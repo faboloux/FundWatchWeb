@@ -570,23 +570,28 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   // ---------------- 派生值 ----------------
   // 数据源优先级状态机：
   //  ① 今日真实净值已更新(lastDate==今天) → 真实净值（今日涨跌为真实）
-  //  ② 场内基金(ETF/LOF)：腾讯当日行情 —— 交易时段=实时价；收盘后=当日收盘价(真实市价)
-  //  ③ 场外基金：新浪当日估值 —— 交易时段=盘中估值；收盘后=15:00 收盘预估
-  //  ④ 兜底：最新确认净值(非今日) → 无法算“今日”收益(chgToday=null)
+  //  ② 场外基金：新浪当日估值 —— 交易时段=盘中估值；收盘后=15:00 收盘预估
+  //  ③ 最新确认净值(非今日，如 QDII 滞后/周末) → 用最新净值的涨跌幅作为“今日收益”口径
+  //  ④ 兜底：无净值 → 无法计算
   function displayOf(f) {
     var navUpdated = (f.lastDate === todayStr());
     var trading = marketOpen();
     if (navUpdated) {
-      return { nav: f.lastNav, chg: f.lastChg, chgToday: f.lastChg, label: '真实净值 ' + f.lastDate, real: true, estimate: false, live: false, navUpdated: true };
+      return { nav: f.lastNav, chg: f.lastChg, chgToday: f.lastChg, label: '真实净值 ' + f.lastDate, real: true, estimate: false, live: false, navUpdated: true, latestNav: false };
     }
     if (f.estimate && f.estimate.date === todayStr()) {
       return {
         nav: f.estimate.nav, chg: f.estimate.chg, chgToday: f.estimate.chg,
         label: trading ? ('盘中估值 ' + f.estimate.time) : '收盘估值(预估) 15:00',
-        real: false, estimate: true, live: trading, navUpdated: false
+        real: false, estimate: true, live: trading, navUpdated: false, latestNav: false
       };
     }
-    return { nav: f.lastNav, chg: f.lastChg, chgToday: null, label: f.lastDate ? ('最新净值 ' + f.lastDate) : '暂无净值', real: false, estimate: false, live: false, navUpdated: false };
+    // QDII/非交易日：最新确认净值的涨跌也参与收益计算，避免只显示百分比
+    var hasLatest = (f.lastNav != null && f.lastChg != null && f.lastDate);
+    if (hasLatest) {
+      return { nav: f.lastNav, chg: f.lastChg, chgToday: f.lastChg, label: '最新净值 ' + f.lastDate, real: false, estimate: false, live: false, navUpdated: false, latestNav: true };
+    }
+    return { nav: f.lastNav, chg: f.lastChg, chgToday: null, label: f.lastDate ? ('最新净值 ' + f.lastDate) : '暂无净值', real: false, estimate: false, live: false, navUpdated: false, latestNav: false };
   }
   function holdingOf(f) {
     if (!(f.shares > 0)) return null;
@@ -794,9 +799,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   function emptyMini() { return '<div class="empty" style="padding:30px 10px">该分组暂无基金</div>'; }
 
-  // 状态徽标：真实净值 / 盘中(新浪估值·交易中) / 收盘预估(新浪估值·15:00)
+  // 状态徽标：真实净值 / 最新净值(QDII滞后) / 盘中(新浪估值·交易中) / 收盘预估(新浪估值·15:00)
   function stateBadge(d) {
     if (d.navUpdated) return { t: '真实净值', c: 'real' };
+    if (d.latestNav) return { t: '最新净值', c: 'real' };
     if (d.estimate && d.live) return { t: '盘中', c: 'live' };
     if (d.estimate) return { t: '收盘预估', c: 'est' };
     return null;
@@ -814,7 +820,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       if (tp != null) {
         mainVal = (tp >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(tp), 0);
         mainCls = tp >= 0 ? 'up' : 'down';
-        mainLabel = d.real ? '今日收益（真实）' : (d.live ? '今日预估（盘中）' : '今日预估（收盘）');
+        mainLabel = d.real ? '今日收益（真实）' : (d.latestNav ? '最新净值收益' : (d.live ? '今日预估（盘中）' : '今日预估（收盘）'));
       } else {
         mainVal = sign(d.chg) + fmt(d.chg, 2) + '%';
         mainCls = c;
@@ -1307,7 +1313,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=7').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=8').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
