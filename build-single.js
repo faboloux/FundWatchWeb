@@ -4,6 +4,8 @@ const fs = require('fs');
 const dir = __dirname + '/';
 const css = fs.readFileSync(dir + 'styles.css', 'utf8');
 const js = fs.readFileSync(dir + 'app.js', 'utf8');
+// SheetJS（Excel 导入导出）：内联进单文件，转义 </script> 防止提前截断
+const xlsx = fs.readFileSync(dir + 'xlsx.full.min.js', 'utf8').replace(/<\/script>/gi, '<\\/script>');
 const html =
 '<!DOCTYPE html>\n' +
 '<html lang="zh-CN">\n' +
@@ -36,6 +38,7 @@ const html =
 '    <button class="fab" id="btnAdd" data-act="goAdd" aria-label="添加基金">＋</button>\n' +
 '  </div>\n' +
 '  <div id="modalRoot"></div>\n' +
+'  <script>\n' + xlsx + '\n  </script>\n' +
 '  <script>\n' + js + '\n  </script>\n' +
 '</body>\n' +
 '</html>\n';
