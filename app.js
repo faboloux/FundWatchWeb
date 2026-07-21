@@ -22,7 +22,8 @@
   var ui = {
     view: 'home', filter: '全部', selectedCode: null,
     searchKw: '', searchResults: [], searchTargets: {}, searching: false,
-    wide: false, lastUpd: 0, refreshing: false
+    wide: false, lastUpd: 0, refreshing: false,
+    sort: 'hold_desc', compact: false
   };
 
   // ---------------- 存储 ----------------
@@ -33,6 +34,8 @@
         var s = JSON.parse(r);
         if (s && s.funds) {
           state.funds = s.funds || {}; state.groups = s.groups || []; state.defaultGroup = s.defaultGroup || '';
+          if (s.sort) ui.sort = s.sort;
+          if (s.compact != null) ui.compact = !!s.compact;
           // 兼容旧数据：补齐新字段
           Object.keys(state.funds).forEach(function (k) {
             var f = state.funds[k];
@@ -46,7 +49,7 @@
   }
   function save() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ funds: state.funds, groups: state.groups, defaultGroup: state.defaultGroup, version: 1 }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ funds: state.funds, groups: state.groups, defaultGroup: state.defaultGroup, version: 1, sort: ui.sort, compact: ui.compact }));
     } catch (e) { toast('当前环境无法本地保存（建议用本地服务器打开）'); }
   }
 
@@ -342,12 +345,45 @@
     else if (ui.view === 'detail') renderDetail();
     var fab = document.getElementById('btnAdd');
     if (fab) fab.style.display = (ui.view === 'home' || ui.view === 'portfolio') ? 'flex' : 'none';
+    view.classList.toggle('compact', ui.compact && (ui.view === 'home' || ui.view === 'portfolio'));
   }
 
   function visibleFunds() {
     var all = Object.keys(state.funds).map(function (k) { return state.funds[k]; });
     if (ui.filter === '全部') return all;
     return all.filter(function (f) { return (f.group || '') === ui.filter; });
+  }
+
+  // 排序指标：历史累计收益(hold) + 今日预估收益(today)；无持仓按 0 计
+  function sortMetrics(f) {
+    var h = holdingOf(f);
+    var hold = h ? h.profit : 0;
+    var today = todayProfitOf(f) || 0;
+    return { hold: hold, today: today };
+  }
+  function sortFunds(list) {
+    var s = ui.sort || 'hold_desc';
+    var axisToday = s.indexOf('today') >= 0;
+    var asc = s.indexOf('_asc') >= 0;
+    return list.slice().sort(function (a, b) {
+      var ma = sortMetrics(a), mb = sortMetrics(b);
+      var va = axisToday ? ma.today : ma.hold;
+      var vb = axisToday ? mb.today : mb.hold;
+      return (asc ? 1 : -1) * (va - vb);
+    });
+  }
+  function sortLabel() {
+    return {
+      'hold_desc': '历史收益 ↓', 'hold_asc': '历史收益 ↑',
+      'today_desc': '今日预估 ↓', 'today_asc': '今日预估 ↑'
+    }[ui.sort] || '历史收益 ↓';
+  }
+  // 排序 + 简洁 工具栏
+  function toolbarHTML() {
+    return '<div class="toolbar">' +
+      '<button class="tbtn" data-act="openSort"><span class="tlabel">排序</span><span class="tval">' + sortLabel() + '</span><span class="tcaret">▾</span></button>' +
+      '<button class="tbtn" data-act="toggleCompact"><span class="tlabel">简洁</span><span class="tval ' + (ui.compact ? 'on' : '') + '">' + (ui.compact ? '开' : '关') + '</span></button>' +
+      '</div>';
   }
 
   function lastUpdText() { return ui.lastUpd ? ('更新 ' + nowHM()) : '未更新'; }
@@ -388,7 +424,8 @@
       html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示按' + vlabel + '计算的今日预估收益</div>';
     }
 
-    var list = visibleFunds();
+    html += toolbarHTML();
+    var list = sortFunds(visibleFunds());
     if (ui.wide) {
       html += '<div class="home-grid">';
       html += '<div class="pane-list">' + (list.length ? list.map(cardHTML).join('') : emptyMini()) + '</div>';
@@ -517,11 +554,13 @@
     html += '<div class="section-h">持仓总览（' + currentValLabel() + '）</div>';
     html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + c + '">' + (totProfit >= 0 ? '+' : '') + '¥' + fmt(totProfit, 2) + '</div><div class="chg-pill ' + c + '">' + (totProfit >= 0 ? '+' : '') + fmt(pct, 2) + '%</div></div>';
     html += '<div class="pstats"><div class="ps"><div class="pl">总市值</div><div class="pv">¥' + fmt(totMV, 2) + '</div></div><div class="ps"><div class="pl">总成本</div><div class="pv">¥' + fmt(totCost, 2) + '</div></div></div></div>';
+    html += toolbarHTML();
     html += '<div class="section-h">逐只明细（' + held.length + '）</div>';
     if (!held.length) {
       html += '<div class="empty"><div class="big">💰</div>还没有设置持仓<br>在基金详情里填份额和成本价</div>';
     } else {
-      held.forEach(function (f) {
+      var heldSorted = sortFunds(held);
+      heldSorted.forEach(function (f) {
         var h = holdingOf(f), hc = colorClass(h.profit);
         html += '<div class="fcard" data-act="open" data-code="' + f.code + '"><div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + '</div></div>';
         html += '<div class="val"><div class="v ' + hc + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(h.profit, 0) + '</div><div class="chg-pill ' + hc + '">' + (h.profit >= 0 ? '+' : '') + fmt(h.profitPct, 2) + '%</div></div></div>';
@@ -664,6 +703,30 @@
     root.querySelector('[data-m="ok"]').onclick = function () { root.innerHTML = ''; };
     root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
   }
+  function openSortSheet() {
+    var root = $('#modalRoot');
+    var opts = [
+      { s: 'hold_desc', t: '历史收益（高 → 低）' },
+      { s: 'hold_asc', t: '历史收益（低 → 高）' },
+      { s: 'today_desc', t: '今日预估（高 → 低）' },
+      { s: 'today_asc', t: '今日预估（低 → 高）' }
+    ];
+    var html = '<div class="modal-mask"><div class="sheet">';
+    html += '<div class="stitle">排序方式</div>';
+    opts.forEach(function (o) {
+      var sel = ui.sort === o.s ? ' sel' : '';
+      var ck = (ui.sort === o.s) ? '<span class="check">✓</span>' : '<span class="check" style="opacity:0">✓</span>';
+      html += '<div class="opt' + sel + '" data-act="setSort" data-s="' + o.s + '"><span>' + o.t + '</span>' + ck + '</div>';
+    });
+    html += '<div class="divider"></div>';
+    html += '<div class="stitle">显示</div>';
+    html += '<div class="opt" data-act="toggleCompactSheet"><span>简洁模式（卡片更紧凑，一屏看更多）</span>' +
+      '<span class="switch ' + (ui.compact ? 'on' : '') + '"><span class="knob"></span></span></div>';
+    html += '<div class="sheet-done"><button class="btn btn-primary" data-act="closeSheet">完成</button></div>';
+    html += '</div></div>';
+    root.innerHTML = html;
+    root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
+  }
   function openInfo() {
     infoModal('<p>数据来自东方财富、腾讯、新浪的公开接口（跨域脚本/JSONP 注入获取，纯前端、无后端、无账号）。</p>' +
       '<p><b>场外开放基金</b>：用<b>新浪盘中估值曲线</b>展示交易时段的<b>实时估值</b>（逐分钟更新，带今日时间戳）；非交易时段回落到最新确认净值 + 历史走势。天天基金 fundgz 接口已于 2026 年停用，已由新浪替代。</p>' +
@@ -696,6 +759,11 @@
         case 'newGroup': newGroup(); break;
         case 'renameGroup': renameGroup(g); break;
         case 'delGroup': delGroup(g); break;
+        case 'openSort': openSortSheet(); break;
+        case 'setSort': ui.sort = el.dataset.s; save(); render(); openSortSheet(); break;
+        case 'toggleCompact': ui.compact = !ui.compact; save(); render(); break;
+        case 'toggleCompactSheet': ui.compact = !ui.compact; save(); render(); openSortSheet(); break;
+        case 'closeSheet': if ($('#modalRoot')) $('#modalRoot').innerHTML = ''; break;
       }
       return;
     }
@@ -735,7 +803,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=4').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=5').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
