@@ -236,16 +236,16 @@ body{
 .tbtn .tcaret{font-size:10px;color:var(--sub);margin-left:1px}
 
 /* ============ 简洁模式：卡片紧凑化（一屏看更多） ============ */
-.view.compact .fcard{padding:9px 12px;margin-bottom:7px}
-.view.compact .fcard .top{gap:6px}
-.view.compact .fcard .nm{font-size:13.5px;max-width:58%}
-.view.compact .fcard .cd{font-size:10.5px;margin-top:1px}
-.view.compact .fcard .v{font-size:17px}
-.view.compact .fcard .chg-pill{font-size:10.5px;padding:2px 6px}
-.view.compact .fcard .bot{display:none}
-.view.compact .fcard .grp-tag{display:none}
-.view.compact .fcard .del{width:22px;height:22px;top:6px;right:6px;font-size:13px}
-.view.compact .fcard .live-badge{margin-top:2px;padding:1px 6px;font-size:9.5px}
+.view.compact .fcard:not(.pf){padding:9px 12px;margin-bottom:7px}
+.view.compact .fcard:not(.pf) .top{gap:6px}
+.view.compact .fcard:not(.pf) .nm{font-size:13.5px;max-width:58%}
+.view.compact .fcard:not(.pf) .cd{font-size:10.5px;margin-top:1px}
+.view.compact .fcard:not(.pf) .v{font-size:17px}
+.view.compact .fcard:not(.pf) .chg-pill{font-size:10.5px;padding:2px 6px}
+.view.compact .fcard:not(.pf) .bot{display:none}
+.view.compact .fcard:not(.pf) .grp-tag{display:none}
+.view.compact .fcard:not(.pf) .del{width:22px;height:22px;top:6px;right:6px;font-size:13px}
+.view.compact .fcard:not(.pf) .live-badge{margin-top:2px;padding:1px 6px;font-size:9.5px}
 .view.compact .toolbar{margin-bottom:8px}
 
 /* ============ 排序 / 简洁 底部弹层 ============ */
