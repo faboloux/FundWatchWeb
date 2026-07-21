@@ -669,8 +669,7 @@ body{
     html += '<div class="section-h">' + esc(scopeLabel) + '（' + vlabel + '）</div>';
     if (sum.count > 0) {
       var pc = colorClass(sum.profit), ppct = sum.prevMv > 0 ? sum.profit / sum.prevMv * 100 : 0;
-      html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</div></div>';
-      html += '<div class="pstats"><div class="ps"><div class="pl">昨日市值</div><div class="pv">¥' + fmt(sum.prevMv, 2) + '</div></div><div class="ps"><div class="pl">今日估算市值</div><div class="pv">¥' + fmt(sum.mv, 2) + '</div></div></div></div>';
+      html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</div></div></div>';
     } else {
       html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示按' + vlabel + '计算的今日预估收益</div>';
     }
@@ -696,20 +695,20 @@ body{
     // 主页卡片主数字优先展示“今日预估收益金额”，无持仓时 fallback 为涨跌幅
     var mainVal, mainCls, mainLabel;
     if (h) {
-      mainVal = (h.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(h.profit), 0);
-      mainCls = h.profit >= 0 ? 'up' : 'down';
+      var tp = todayProfitOf(f) || 0;
+      mainVal = (tp >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(tp), 0);
+      mainCls = tp >= 0 ? 'up' : 'down';
       mainLabel = '今日预估收益';
     } else {
       mainVal = sign(d.chg) + fmt(d.chg, 2) + '%';
       mainCls = c;
       mainLabel = d.label;
     }
-    var hold = h ? '<span class="' + (h.profit >= 0 ? 'up' : 'down') + '">' + (h.profit >= 0 ? '+' : '') + '¥' + fmt(Math.abs(h.profit), 0) + '</span>' : '';
     return '<div class="fcard" data-act="open" data-code="' + f.code + '">' +
       '<button class="del" data-act="del" data-code="' + f.code + '" title="删除">✕</button>' +
       '<div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + (f.exchangeTraded ? ' · 场内' : '') + '</div></div>' +
       '<div class="val"><div class="v ' + mainCls + '">' + mainVal + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div>' + liveBadge + '</div></div>' +
-      '<div class="bot"><span>' + esc(h ? d.label : mainLabel) + '</span>' + (h ? '' : hold) + '</div>' + grp +
+      '<div class="bot"><span>' + esc(mainLabel) + '</span></div>' + grp +
       '</div>';
   }
 
