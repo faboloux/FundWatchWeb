@@ -346,15 +346,11 @@
     if (ui.refreshing) return;
     ui.refreshing = true; setSpin(true);
     var codes = Object.keys(state.funds);
-    var seq = Promise.resolve();
-    codes.forEach(function (code) {
-      seq = seq.then(function () {
-        return refreshOne(code);
-      });
-    });
-    seq.then(function () {
-      ui.refreshing = false; ui.lastUpd = Date.now(); setSpin(false); render();
-    });
+    Promise.all(codes.map(function (code) { return refreshOne(code); }))
+      .then(finishRefresh).catch(finishRefresh);
+  }
+  function finishRefresh() {
+    ui.refreshing = false; ui.lastUpd = Date.now(); setSpin(false); render();
   }
 
   function setSpin(on) { var b = $('#btnRefresh'); if (b) b.classList.toggle('spin', on); }
@@ -388,6 +384,17 @@
     }
     return allPositions()
       .filter(function (p) { return (p.h.group || '') === ui.filter && ((p.h.shares > 0) || (p.h.costPrice > 0)); })
+      .map(function (p) { return { f: p.f, hs: [p.h] }; });
+  }
+  // 全部基金按 code 聚合为卡片对象（忽略当前筛选），供首页“全部”标签汇总
+  function allCards() {
+    var map = {};
+    allPositions().forEach(function (p) { (map[p.code] = map[p.code] || { f: p.f, hs: [] }).hs.push(p.h); });
+    return Object.keys(map).map(function (c) { return map[c]; });
+  }
+  // 某分组的卡片对象（每 holding 一张卡），供首页分组标签汇总
+  function cardsOfGroup(g) {
+    return allPositions().filter(function (p) { return (p.h.group || '') === g; })
       .map(function (p) { return { f: p.f, hs: [p.h] }; });
   }
 
@@ -430,16 +437,14 @@
     html += '<div class="market-row"><div class="market ' + (open ? 'open' : '') + '"><span class="dot"></span>' + (open ? '盘中交易中' : '非交易时段') + '</div><span class="upd">' + lastUpdText() + '</span></div>';
     // 分组标签栏（每个标签下显示本范围按估值的收益金额）
     html += '<div class="gtabs">';
-    var allCodes = Object.keys(state.funds);
-    var allToday = sumToday(allCodes);
+    var allToday = sumToday(allCards());
     var gtabSub = function (profit, count) {
       if (!count) return '';
       return '<span class="gtab-sub ' + (profit >= 0 ? 'up' : 'down') + '">' + (profit >= 0 ? '+' : '') + '¥' + fmt(Math.abs(profit), 0) + '</span>';
     };
     html += '<button class="gtab ' + (ui.filter === '全部' ? 'on' : '') + '" data-act="filter" data-g="全部">全部' + gtabSub(allToday.profit, allToday.count) + '</button>';
     state.groups.forEach(function (g) {
-      var gc = allCodes.filter(function (k) { return (state.funds[k].group || '') === g; });
-      var gs = sumToday(gc);
+      var gs = sumToday(cardsOfGroup(g));
       html += '<button class="gtab ' + (ui.filter === g ? 'on' : '') + '" data-act="filter" data-g="' + esc(g) + '">' + esc(g) + gtabSub(gs.profit, gs.count) + '</button>';
     });
     html += '<button class="gtab add" data-act="newGroup">＋分组</button>';
@@ -1058,7 +1063,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=9').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=10').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
