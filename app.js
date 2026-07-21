@@ -178,6 +178,18 @@
             chg2: Number.isFinite(pct2) ? pct2 : null
           };
         }
+        // 今日的盘中估值曲线（所有点，用于详情页画图）
+        out.curve = nw.filter(function (p) {
+          return ('' + (p.pre_date || '')).trim() === todayStr();
+        }).map(function (p) {
+          return {
+            time: ('' + (p.min_time || '')).slice(0, 5),
+            nav: parseFloat(p.pre_nav),
+            nav2: parseFloat(p.pre_nav2),
+            chg: parseFloat(p.nav_pct),
+            chg2: parseFloat(p.nav2_pct)
+          };
+        }).filter(function (p) { return Number.isFinite(p.nav); });
       }
       return out;
     } catch (e) { return null; }
@@ -272,6 +284,7 @@
         // 仅交易时段保留实时价/盘中估值；非交易时段回落到最新净值
         f3.live = (live && marketOpen()) ? live : null;
         f3.estimate = (sn && sn.estimate && marketOpen()) ? sn.estimate : null;
+        f3.estimateCurve = (sn && sn.curve && sn.curve.length >= 2 && marketOpen()) ? sn.curve : null;
         f3.updatedAt = Date.now(); save();
         if (ui.view === 'home' || ui.view === 'detail' || ui.view === 'portfolio') render();
       });
@@ -413,7 +426,9 @@
     var color = d.chg >= 0 ? '#EE2B3B' : '#0CA678';
     var nav = d.nav || 0;
     var groupsOpts = state.groups.map(function (g) { return '<option value="' + esc(g) + '" ' + ((f.group || '') === g ? 'selected' : '') + '>' + esc(g) + '</option>'; }).join('');
-    var spark = sparkSVG(f.history, 300, 140, color);
+    var hasCurve = f.estimateCurve && f.estimateCurve.length >= 2;
+    var spark = sparkSVG(hasCurve ? f.estimateCurve : f.history, 300, 140, color);
+    var curveLabel = hasCurve ? '今日盘中估值曲线（新浪）' : '历史净值走势';
 
     var html = '<div class="detail-wrap">';
     html += '<div class="detail-head"><div><div style="font-weight:700;font-size:16px">' + esc(f.name || f.code) + '</div><div style="font-size:12px;color:var(--sub)">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + '</div></div>';
@@ -426,6 +441,7 @@
         html += '<div class="est-alt">另一口径：' + fmt(e.nav2) + ' · ' + fmt(e.chg2, 2) + '%</div>';
       }
     }
+    html += '<div class="curve-label">' + curveLabel + '</div>';
     html += spark;
     html += '<label class="et-toggle"><input type="checkbox" id="chkET" data-code="' + f.code + '" ' + (f.exchangeTraded ? 'checked' : '') + '/> 场内基金（ETF / LOF，显示盘中实时价）</label>';
     html += '<div>';
