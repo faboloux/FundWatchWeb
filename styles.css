@@ -67,14 +67,33 @@ body{
 .home-grid{display:block}
 .section-h{font-size:12px;color:var(--sub);font-weight:800;margin:16px 4px 8px;display:flex;justify-content:space-between;align-items:center;letter-spacing:.3px;text-transform:uppercase}
 
-/* 市场状态（精简药丸，不再霸屏） */
-.market-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:0 2px}
-.market{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--sub);
-  background:var(--chip);border-radius:999px;padding:5px 12px;letter-spacing:.2px}
+/* 市场状态 + 指数滚动条 */
+.market-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;padding:0 2px}
+.market{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--sub);
+  background:var(--chip);border-radius:999px;padding:5px 10px;letter-spacing:.2px;flex:0 0 auto;white-space:nowrap}
 .market .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--down)}
 .market.open{color:var(--up);background:var(--tint-up)}
 .market.open .dot{background:var(--up)}
-.market-row .upd{font-size:11px;color:var(--sub);font-weight:500}
+.market-row .upd{font-size:11px;color:var(--sub);font-weight:500;flex:0 0 auto;white-space:nowrap}
+
+.idx-ticker{flex:1;position:relative;overflow:hidden;height:34px;border-radius:999px;background:var(--card);box-shadow:var(--shadow-card);touch-action:pan-y}
+.idx-track{display:flex;height:100%;transition:transform .35s cubic-bezier(.25,.8,.25,1)}
+.idx-card{flex:0 0 100%;height:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:0 10px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.idx-card:active{opacity:.7}
+.idx-name{font-size:11px;font-weight:700;color:var(--sub);white-space:nowrap}
+.idx-price{font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;white-space:nowrap}
+.idx-pill{font-size:11px;padding:2px 7px;border-radius:999px}
+.idx-dots{position:absolute;bottom:4px;left:50%;transform:translateX(-50%);display:flex;gap:4px}
+.idx-dot{width:4px;height:4px;border-radius:50%;background:var(--line)}
+.idx-dot.on{background:var(--brand);width:8px;border-radius:2px}
+
+/* 指数详情页数据网格 */
+.idx-loading{display:flex;align-items:center;justify-content:center;height:120px;color:var(--sub);font-size:13px;font-weight:500}
+.idx-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+.idx-cell{background:var(--card);border-radius:var(--radius-sm);padding:10px 6px;text-align:center;box-shadow:var(--shadow-card);border:1px solid rgba(236,238,243,.7);min-width:0}
+.idx-cell:nth-child(5),.idx-cell:nth-child(6){grid-column:span 2}
+.idx-k{display:block;font-size:10.5px;color:var(--sub);font-weight:600;margin-bottom:3px}
+.idx-v{display:block;font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ============ 分组标签栏 ============ */
 .gtabs{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 12px;scrollbar-width:none}
