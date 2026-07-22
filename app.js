@@ -23,10 +23,18 @@
     view: 'home', filter: '全部', selectedCode: null,
     searchKw: '', searchResults: [], searchTargets: {}, searching: false,
     wide: false, lastUpd: 0, refreshing: false,
-    homeSort: 'hold_desc', portSort: 'hold_desc', compact: false
+    homeSort: 'today_desc', portSort: 'hold_desc', compact: false
   };
-  // 取/设 当前页面使用的排序（首页、收益页各自独立，不联动）
-  function curSort() { return ui.view === 'portfolio' ? ui.portSort : ui.homeSort; }
+  // 各页允许的排序项：自选=今日预估/今日预估率；收益=历史收益/历史收益率（两页独立，不联动）
+  var HOME_SORTS = ['today_desc', 'today_asc', 'todayrate_desc', 'todayrate_asc'];
+  var PORT_SORTS = ['hold_desc', 'hold_asc', 'holdrate_desc', 'holdrate_asc'];
+  function allowSorts() { return ui.view === 'portfolio' ? PORT_SORTS : HOME_SORTS; }
+  // 取/设 当前页面使用的排序；对旧值/非法值回落到该页默认第一项
+  function curSort() {
+    var s = ui.view === 'portfolio' ? ui.portSort : ui.homeSort;
+    var allow = allowSorts();
+    return allow.indexOf(s) >= 0 ? s : allow[0];
+  }
   function setCurSort(s) { if (ui.view === 'portfolio') ui.portSort = s; else ui.homeSort = s; }
 
   // ---------------- 存储 ----------------
@@ -410,27 +418,30 @@
       .map(function (p) { return { f: p.f, hs: [p.h] }; });
   }
 
-  // 排序指标：历史累计收益(hold) + 今日预估收益(today)；无持仓按 0 计
+  // 排序指标：历史累计收益(hold)/收益率(holdrate) + 今日预估收益(today)/收益率(todayrate)；无持仓按 0 计
   function sortMetrics(card) {
     var agg = aggregate(card.f, card.hs);
-    return { hold: agg.totalProfit, today: agg.today || 0 };
+    return {
+      hold: agg.totalProfit, holdrate: agg.totalProfitPct || 0,
+      today: agg.today || 0, todayrate: agg.todayPct || 0
+    };
   }
   function sortFunds(list) {
-    var s = curSort() || 'hold_desc';
-    var axisToday = s.indexOf('today') >= 0;
+    var s = curSort();
     var asc = s.indexOf('_asc') >= 0;
+    var key = s.replace('_asc', '').replace('_desc', ''); // hold / holdrate / today / todayrate
     return list.slice().sort(function (a, b) {
       var ma = sortMetrics(a), mb = sortMetrics(b);
-      var va = axisToday ? ma.today : ma.hold;
-      var vb = axisToday ? mb.today : mb.hold;
-      return (asc ? 1 : -1) * (va - vb);
+      return (asc ? 1 : -1) * ((ma[key] || 0) - (mb[key] || 0));
     });
   }
   function sortLabel() {
     return {
       'hold_desc': '历史收益 ↓', 'hold_asc': '历史收益 ↑',
-      'today_desc': '今日预估 ↓', 'today_asc': '今日预估 ↑'
-    }[curSort()] || '历史收益 ↓';
+      'holdrate_desc': '历史收益率 ↓', 'holdrate_asc': '历史收益率 ↑',
+      'today_desc': '今日预估 ↓', 'today_asc': '今日预估 ↑',
+      'todayrate_desc': '今日预估率 ↓', 'todayrate_asc': '今日预估率 ↑'
+    }[curSort()] || (ui.view === 'portfolio' ? '历史收益 ↓' : '今日预估 ↓');
   }
   // 排序 + 简洁 工具栏
   function toolbarHTML() {
@@ -445,7 +456,7 @@
   // ---------------- 渲染：首页 ----------------
   function renderHome() {
     var open = marketOpen();
-    var axisToday = (ui.homeSort || 'hold_desc').indexOf('today') >= 0;
+    var axisToday = curSort().indexOf('today') >= 0;
     var html = '';
     html += '<div class="market-row"><div class="market ' + (open ? 'open' : '') + '"><span class="dot"></span>' + (open ? '盘中交易中' : '非交易时段') + '</div><span class="upd">' + lastUpdText() + '</span></div>';
     // 分组标签栏：按当前排序口径显示历史收益或今日收益
@@ -683,7 +694,7 @@
     var map = {};
     pos.forEach(function (p) { (map[p.code] = map[p.code] || { f: p.f, hs: [] }).hs.push(p.h); });
     var cards = Object.keys(map).map(function (c) { return map[c]; });
-    var axisToday = (ui.portSort || 'hold_desc').indexOf('today') >= 0;
+    var axisToday = curSort().indexOf('today') >= 0;
     cards = sortFunds(cards);
     html += '<div class="section-h">逐只明细（' + cards.length + '）</div>';
     if (!cards.length) {
@@ -903,11 +914,16 @@
   }
   function openSortSheet() {
     var root = $('#modalRoot');
-    var opts = [
+    var opts = ui.view === 'portfolio' ? [
       { s: 'hold_desc', t: '历史收益（高 → 低）' },
       { s: 'hold_asc', t: '历史收益（低 → 高）' },
+      { s: 'holdrate_desc', t: '历史收益率（高 → 低）' },
+      { s: 'holdrate_asc', t: '历史收益率（低 → 高）' }
+    ] : [
       { s: 'today_desc', t: '今日预估（高 → 低）' },
-      { s: 'today_asc', t: '今日预估（低 → 高）' }
+      { s: 'today_asc', t: '今日预估（低 → 高）' },
+      { s: 'todayrate_desc', t: '今日预估率（高 → 低）' },
+      { s: 'todayrate_asc', t: '今日预估率（低 → 高）' }
     ];
     var html = '<div class="modal-mask"><div class="sheet">';
     html += '<div class="stitle">排序方式</div>';
@@ -1123,7 +1139,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=13').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=14').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
