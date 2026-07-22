@@ -954,7 +954,7 @@
   // 绘制今日收益/收益率走势图（支持收益/收益率切换，盈亏线上方红色/下方绿色分段）
   function renderTrendChart(data, mode, w, h) {
     mode = mode || 'profit';
-    if (!data || data.length < 2) return '<div class="trend-empty">暂无足够今日估值曲线数据</div>';
+    if (!data || data.length < 2) return { svg: '<div class="trend-empty">暂无足够今日估值曲线数据</div>', meta: null };
     var vals = data.map(function (p) { return mode === 'profit' ? p.profit : p.pct; });
     var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
     var rng = (max - min) || 1;
@@ -1010,10 +1010,13 @@
       fills += '<polygon points="' + area + '" fill="' + color + '" fill-opacity="0.10" stroke="none"></polygon>';
       lines += '<polyline points="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>';
     });
-    return '<svg class="trend-chart" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
-      gridLines +
-      '<line x1="0" y1="' + zeroY.toFixed(1) + '" x2="' + w + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--sub)" stroke-width="1" opacity="0.25"/>' +
-      fills + lines + labels + '</svg>';
+    return {
+      svg: '<svg class="trend-chart" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+        gridLines +
+        '<line x1="0" y1="' + zeroY.toFixed(1) + '" x2="' + w + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--sub)" stroke-width="1" opacity="0.25"/>' +
+        fills + lines + labels + '</svg>',
+      meta: { min: min, rng: rng, padT: padT, plotH: plotH, w: w, h: h, zeroY: zeroY }
+    };
   }
 
   function openTodayChart() {
@@ -1034,15 +1037,17 @@
       : (numVal >= 0 ? '+' : '') + fmt(numVal, 2) + '%');
     var subProfitTxt = last ? ((last.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(last.profit), 2)) : '—';
     var subRateTxt = last ? ((last.pct >= 0 ? '+' : '') + fmt(last.pct, 2) + '%') : '—';
-    var svg = renderTrendChart(data, mode, 360, 190);
+    var chart = renderTrendChart(data, mode, 360, 190);
+    var svg = chart.svg, meta = chart.meta;
+    var dragHTML = meta ? '<div class="cc" id="cc"><div class="cc-line" id="ccLine"></div><div class="cc-tip" id="ccTip"></div></div>' : '';
     root.innerHTML = '<div class="modal-mask page-modal">' +
       '<div class="chart-page">' +
         '<div class="chart-head"><button class="icon-btn back" data-m="close">←</button><div class="chart-title">' + title + '</div><div style="width:44px"></div></div>' +
         '<div class="chart-body">' +
           '<div class="chart-big ' + numCls + '">' +
-            '<div class="chart-big-label">' + (mode === 'profit' ? '当前预估收益' : '当前预估收益率') + '</div>' +
-            '<div class="chart-big-num">' + numTxt + '</div>' +
-            '<div class="chart-big-row">' +
+            '<div class="chart-big-label" id="cBigLabel">' + (mode === 'profit' ? '当前预估收益' : '当前预估收益率') + '</div>' +
+            '<div class="chart-big-num" id="cBigNum">' + numTxt + '</div>' +
+            '<div class="chart-big-row" id="cBigRow">' +
               '<span class="cb-item"><b>' + subProfitTxt + '</b>收益</span>' +
               '<span class="cb-item"><b>' + subRateTxt + '</b>收益率</span>' +
               '<span class="state-badge ' + sb2.c + '">' + sb2.t + '</span>' +
@@ -1052,8 +1057,8 @@
             '<button class="tog ' + (mode === 'profit' ? 'on' : '') + '" data-m="modeProfit">收益</button>' +
             '<button class="tog ' + (mode === 'rate' ? 'on' : '') + '" data-m="modeRate">收益率</button>' +
           '</div>' +
-          '<div class="chart-wrap">' + svg + '</div>' +
-          '<div class="chart-note">按当前筛选范围汇总 · 数据来源：新浪盘中估值曲线</div>' +
+          '<div class="chart-wrap" id="cWrap">' + svg + dragHTML + '</div>' +
+          '<div class="chart-note">按当前筛选范围汇总 · 数据来源：新浪盘中估值曲线 · 横轴可拖动查看任意时刻</div>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -1061,6 +1066,100 @@
     root.querySelector('[data-m="modeProfit"]').onclick = function () { ui.trendMode = 'profit'; openTodayChart(); };
     root.querySelector('[data-m="modeRate"]').onclick = function () { ui.trendMode = 'rate'; openTodayChart(); };
     root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
+    if (meta && data && data.length) bindChartDrag(data, meta, mode, scope, sb2, { numCls: numCls, numTxt: numTxt, subProfitTxt: subProfitTxt, subRateTxt: subRateTxt, sb2: sb2 });
+  }
+
+  // 横轴拖动：显示任意时刻的盈亏值 / 收益率
+  function bindChartDrag(data, meta, mode, scope, sb2, lastView) {
+    var root = $('#modalRoot');
+    var wrap = root.querySelector('#cWrap');
+    var cc = root.querySelector('#cc');
+    var ccLine = root.querySelector('#ccLine');
+    var ccTip = root.querySelector('#ccTip');
+    var bigEl = root.querySelector('.chart-big');
+    var bigLabel = root.querySelector('#cBigLabel');
+    var bigNum = root.querySelector('#cBigNum');
+    var bigRow = root.querySelector('#cBigRow');
+    if (!wrap) return;
+    var ts = data.map(function (d) { return timeToMin(d.time); });
+    function xToMinFromX(x, w) {
+      var half = w * 0.5;
+      if (x <= half) return 570 + (x / half) * 120; // 9:30–11:30
+      return 780 + ((x - half) / half) * 120;        // 13:00–15:00
+    }
+    function minToTime(m) {
+      m = Math.round(m); var hh = Math.floor(m / 60), mm = m % 60;
+      return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+    }
+    function interpolateAt(xvb) {
+      var t = xToMinFromX(xvb, meta.w);
+      var a = 0, b = ts.length - 1;
+      if (t <= ts[0]) { a = b = 0; }
+      else if (t >= ts[ts.length - 1]) { a = b = ts.length - 1; }
+      else { for (var i = 0; i < ts.length - 1; i++) { if (t >= ts[i] && t <= ts[i + 1]) { a = i; b = i + 1; break; } } }
+      var profit, pct;
+      if (a === b) { profit = data[a].profit; pct = data[a].pct; }
+      else {
+        var r = (t - ts[a]) / (ts[b] - ts[a]);
+        profit = data[a].profit + (data[b].profit - data[a].profit) * r;
+        pct = data[a].pct + (data[b].pct - data[a].pct) * r;
+      }
+      var v = mode === 'profit' ? profit : pct;
+      var y = meta.padT + meta.plotH - ((v - meta.min) / meta.rng) * meta.plotH;
+      return { time: minToTime(t), profit: profit, pct: pct, v: v, y: y };
+    }
+    function showAt(xvb) {
+      var r = interpolateAt(xvb);
+      var pctLeft = (xvb / meta.w) * 100;
+      var pctTop = (r.y / meta.h) * 100;
+      cc.style.display = 'block';
+      ccLine.style.left = pctLeft + '%';
+      ccTip.style.left = pctLeft + '%';
+      ccTip.style.top = pctTop + '%';
+      var up = r.v >= 0;
+      ccTip.className = 'cc-tip ' + (up ? 'up' : 'down');
+      ccTip.innerHTML = '<div class="cc-time">' + r.time + '</div>' +
+        '<div class="cc-row"><span>收益</span><b>' + (r.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(r.profit), 2) + '</b></div>' +
+        '<div class="cc-row"><span>收益率</span><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b></div>';
+      var nv = r.v;
+      bigEl.className = 'chart-big ' + (up ? 'up' : 'down');
+      bigLabel.textContent = mode === 'profit' ? '该时刻预估收益' : '该时刻预估收益率';
+      bigNum.textContent = mode === 'profit'
+        ? (nv >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(nv), 2)
+        : (nv >= 0 ? '+' : '') + fmt(nv, 2) + '%';
+      bigRow.innerHTML = '<span class="cb-item"><b>' + (r.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(r.profit), 2) + '</b>收益</span>' +
+        '<span class="cb-item"><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b>收益率</span>';
+    }
+    function resetToLast() {
+      cc.style.display = 'none';
+      bigEl.className = 'chart-big ' + lastView.numCls;
+      bigLabel.textContent = mode === 'profit' ? '当前预估收益' : '当前预估收益率';
+      bigNum.textContent = lastView.numTxt;
+      bigRow.innerHTML = '<span class="cb-item"><b>' + lastView.subProfitTxt + '</b>收益</span>' +
+        '<span class="cb-item"><b>' + lastView.subRateTxt + '</b>收益率</span>' +
+        '<span class="state-badge ' + lastView.sb2.c + '">' + lastView.sb2.t + '</span>';
+    }
+    var dragging = false;
+    function xvbFromEv(ev) {
+      var rect = wrap.getBoundingClientRect();
+      var x = (ev.clientX - rect.left) / rect.width * meta.w;
+      return Math.max(0, Math.min(meta.w, x));
+    }
+    wrap.addEventListener('pointerdown', function (ev) {
+      dragging = true;
+      try { wrap.setPointerCapture(ev.pointerId); } catch (e) {}
+      showAt(xvbFromEv(ev));
+      ev.preventDefault();
+    });
+    wrap.addEventListener('pointermove', function (ev) {
+      if (!dragging) return;
+      showAt(xvbFromEv(ev));
+      ev.preventDefault();
+    });
+    function endDrag(ev) { if (dragging) { dragging = false; resetToLast(); } }
+    wrap.addEventListener('pointerup', endDrag);
+    wrap.addEventListener('pointercancel', endDrag);
+    wrap.addEventListener('pointerleave', function (ev) { if (dragging) { try { wrap.releasePointerCapture(ev.pointerId); } catch (e) {} } });
   }
 
   function openSortSheet() {
@@ -1291,7 +1390,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=17').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=18').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
