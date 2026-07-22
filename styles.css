@@ -189,10 +189,20 @@ body{
 .chart-toggle{display:flex;gap:8px;margin-bottom:14px;background:var(--chip);padding:4px;border-radius:var(--radius-sm)}
 .chart-toggle .tog{flex:1;border:none;background:transparent;border-radius:10px;padding:9px 10px;font-size:14px;font-weight:700;color:var(--sub);cursor:pointer;transition:all .15s ease}
 .chart-toggle .tog.on{background:var(--card);color:var(--txt);box-shadow:0 1px 4px rgba(24,32,64,.08)}
-.chart-wrap{background:var(--card);border-radius:var(--radius);padding:10px 10px 6px;box-shadow:var(--shadow-card);border:1px solid rgba(236,238,243,.7);height:240px;overflow:hidden}
+.chart-wrap{position:relative;background:var(--card);border-radius:var(--radius);padding:10px 10px 6px;box-shadow:var(--shadow-card);border:1px solid rgba(236,238,243,.7);height:240px;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
 .trend-chart{width:100%;height:100%;display:block;overflow:visible}
 .trend-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--sub);font-size:13px;font-weight:500}
 .chart-note{font-size:11px;color:var(--sub);margin-top:14px;text-align:center;font-weight:500;opacity:.85}
+
+/* 走势图拖动 crosshair + 数值气泡 */
+.cc{position:absolute;inset:0;pointer-events:none;display:none;z-index:5}
+.cc-line{position:absolute;top:6px;bottom:22px;width:1px;left:0;background:var(--sub);opacity:.45;transform:translateX(-0.5px)}
+.cc-tip{position:absolute;left:0;top:0;transform:translate(-50%,-50%);background:rgba(26,29,36,.94);color:#fff;border-radius:11px;padding:7px 10px;min-width:104px;box-shadow:var(--shadow-2);font-size:11px;font-variant-numeric:tabular-nums}
+.cc-tip .cc-time{font-size:10px;opacity:.7;font-weight:600;margin-bottom:4px;letter-spacing:.3px}
+.cc-tip .cc-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:2px;font-weight:500;opacity:.9}
+.cc-tip .cc-row b{font-weight:800;font-size:12px}
+.cc-tip.up .cc-row b{color:#FF9AA4}
+.cc-tip.down .cc-row b{color:#5FE6AE}
 
 /* ============ 底部导航 ============ */
 .bottombar{
