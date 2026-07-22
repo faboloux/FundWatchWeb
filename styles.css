@@ -6,6 +6,7 @@
   --down:#0CA678;            /* 跌：绿（更现代的翠绿） */
   --flat:#9AA1AE;
   --bg:#F4F5F9;             /* 冷调浅灰底 */
+  --bg-2:#ECEEF3;           /* 更深的灰，用于微妙渐变 */
   --card:#FFFFFF;
   --line:#ECEEF3;
   --txt:#1A1D24;
@@ -13,9 +14,12 @@
   --chip:#F0F2F7;
   --tint-up:rgba(238,43,59,.10);
   --tint-down:rgba(12,166,120,.10);
-  --shadow:0 2px 12px rgba(24,32,64,.06);
-  --shadow-2:0 8px 28px rgba(24,32,64,.12);
+  --shadow:0 1px 4px rgba(24,32,64,.04),0 4px 14px rgba(24,32,64,.06);
+  --shadow-2:0 6px 22px rgba(24,32,64,.10);
+  --shadow-card:0 2px 8px rgba(24,32,64,.05);
   --radius:18px;
+  --radius-sm:12px;
+  --radius-xs:10px;
   --safe-b:env(safe-area-inset-bottom,0px);
   --safe-t:env(safe-area-inset-top,0px);
 }
@@ -53,6 +57,7 @@ body{
   transition:transform .12s ease,background .12s ease;
 }
 .icon-btn:active{transform:scale(.92);background:#e2e6ee}
+.icon-btn.back{font-size:20px;font-weight:700}
 .add-top{display:none;color:var(--brand);font-weight:800;font-size:22px}
 #btnRefresh.spin{animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -60,16 +65,16 @@ body{
 /* ============ 主视图 ============ */
 .view{flex:1;padding:12px 12px calc(156px + var(--safe-b));overflow-x:hidden}
 .home-grid{display:block}
-.section-h{font-size:13px;color:var(--sub);font-weight:700;margin:16px 4px 8px;display:flex;justify-content:space-between;align-items:center}
+.section-h{font-size:12px;color:var(--sub);font-weight:800;margin:16px 4px 8px;display:flex;justify-content:space-between;align-items:center;letter-spacing:.3px;text-transform:uppercase}
 
 /* 市场状态（精简药丸，不再霸屏） */
 .market-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:0 2px}
-.market{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--sub);
-  background:var(--chip);border-radius:999px;padding:5px 12px}
-.market .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--down)}
+.market{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--sub);
+  background:var(--chip);border-radius:999px;padding:5px 12px;letter-spacing:.2px}
+.market .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--down)}
 .market.open{color:var(--up);background:var(--tint-up)}
 .market.open .dot{background:var(--up)}
-.market-row .upd{font-size:11.5px;color:var(--sub)}
+.market-row .upd{font-size:11px;color:var(--sub);font-weight:500}
 
 /* ============ 分组标签栏 ============ */
 .gtabs{display:flex;gap:8px;overflow-x:auto;padding:4px 2px 12px;scrollbar-width:none}
@@ -77,29 +82,29 @@ body{
 .gtab{
   flex:0 0 auto;padding:7px 15px;border-radius:999px;border:1px solid var(--line);
   background:var(--card);color:var(--sub);font-size:13.5px;font-weight:700;cursor:pointer;white-space:nowrap;
-  transition:all .14s ease;
+  transition:all .14s ease;box-shadow:var(--shadow-card);
 }
-.gtab.on{background:linear-gradient(135deg,var(--brand),var(--brand-2));border-color:transparent;color:#fff;box-shadow:0 4px 12px rgba(238,43,59,.30)}
+.gtab.on{background:linear-gradient(135deg,var(--brand),var(--brand-2));border-color:transparent;color:#fff;box-shadow:0 4px 12px rgba(238,43,59,.24)}
 .gtab.add{flex:0 0 auto;padding:7px 13px;border-radius:999px;border:1px dashed var(--brand);
-  background:transparent;color:var(--brand);font-size:13.5px;font-weight:700;cursor:pointer}
+  background:transparent;color:var(--brand);font-size:13.5px;font-weight:700;cursor:pointer;box-shadow:none}
 /* 分组标签：两行（名称 + 本范围按估值收益金额） */
 .gtab{flex-direction:column;align-items:center;justify-content:center;gap:2px;line-height:1.18;padding:6px 15px}
 .gtab .gtab-sub{font-size:9.5px;font-weight:800;letter-spacing:.2px}
-.gtab.on .gtab-sub{color:#fff;opacity:.96}
+.gtab.on .gtab-sub{color:#fff;opacity:.92}
 /* 首页：当前范围收益汇总为空时的占位 */
-.sum-empty{background:var(--chip);color:var(--sub);border-radius:12px;padding:13px 15px;
+.sum-empty{background:var(--chip);color:var(--sub);border-radius:var(--radius-sm);padding:13px 15px;
   font-size:12px;line-height:1.55;font-weight:500}
 
 /* ============ 基金卡片 ============ */
 .fcard{
-  background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);
+  background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow-card);
   padding:15px 16px;margin-bottom:11px;cursor:pointer;position:relative;
   border:1px solid rgba(236,238,243,.7);
   transition:transform .12s ease,box-shadow .12s ease;
 }
-.fcard:active{transform:scale(.985);box-shadow:var(--shadow-2)}
+.fcard:active{transform:scale(.985);box-shadow:var(--shadow)}
 .fcard .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-.fcard .nm{font-size:15.5px;font-weight:800;line-height:1.3;max-width:62%}
+.fcard .nm{font-size:15.5px;font-weight:800;line-height:1.3;max-width:62%;color:var(--txt)}
 .fcard .cd{font-size:11.5px;color:var(--sub);margin-top:3px;font-weight:500}
 .fcard .val{text-align:right;flex:0 0 auto}
 .fcard .v{font-size:22px;font-weight:800;letter-spacing:.3px;font-variant-numeric:tabular-nums}
@@ -108,8 +113,8 @@ body{
   background:linear-gradient(135deg,#0CA678,#19C37D);padding:2px 8px;border-radius:999px;letter-spacing:.5px;
   box-shadow:0 2px 6px rgba(12,166,120,.35)}
 /* 状态徽标：实时/盘中=绿，收盘预估=琥珀，真实净值/真实=靛蓝 */
-.state-badge{display:inline-block;font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:999px;letter-spacing:.3px;vertical-align:middle;white-space:nowrap}
-.state-badge.live{color:#fff;background:linear-gradient(135deg,#0CA678,#19C37D);box-shadow:0 2px 6px rgba(12,166,120,.30)}
+.state-badge{display:inline-block;font-size:10px;font-weight:800;padding:3px 9px;border-radius:999px;letter-spacing:.3px;vertical-align:middle;white-space:nowrap;line-height:1.2}
+.state-badge.live{color:#fff;background:linear-gradient(135deg,#0CA678,#19C37D);box-shadow:0 2px 6px rgba(12,166,120,.22)}
 .state-badge.est{color:#B45309;background:#FEF3C7}
 .state-badge.real{color:#4F46E5;background:#EEF0FF}
 .pf-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -147,9 +152,9 @@ body{
 
 /* 收益汇总专用：总收益置顶 + 总市值/总成本两列网格（彻底避免折行） */
 .pf-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:2px}
-.pf-num{font-size:27px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.pf-num{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1;min-width:0;overflow:hidden;text-overflow:ellipsis;letter-spacing:.4px}
 .pstats{display:flex;gap:10px;margin-top:13px}
-.pstats .ps{flex:1;background:var(--chip);border-radius:12px;padding:10px 12px;min-width:0}
+.pstats .ps{flex:1;background:var(--chip);border-radius:var(--radius-sm);padding:10px 12px;min-width:0}
 .pstats .pl{font-size:11.5px;color:var(--sub);font-weight:600}
 .pstats .pv{font-size:16px;font-weight:800;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
 
@@ -160,37 +165,44 @@ body{
 .chg-pill.flat{color:var(--flat);background:var(--chip)}
 
 /* 首页汇总卡片：可点击，带提示 */
+.fcard.pf{background:linear-gradient(180deg,var(--card) 0%,#FAFBFD 100%)}
 .pf-click{position:relative}
-.pf-click .pf-hint{font-size:11px;color:var(--sub);margin-top:6px;font-weight:600;letter-spacing:.2px}
+.pf-click .pf-hint{font-size:11px;color:var(--sub);margin-top:8px;font-weight:600;letter-spacing:.2px;display:flex;align-items:center;gap:4px}
+.pf-click .pf-hint::after{content:"▸";font-size:10px}
 .pf-click:active{transform:scale(.985)}
 
 /* 全屏走势图页面 */
 .page-modal{align-items:flex-start;overflow:auto;background:var(--bg)}
 .chart-page{min-height:100vh;width:100%;max-width:1100px;margin:0 auto;background:var(--bg);display:flex;flex-direction:column}
-.chart-head{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;padding:calc(10px + var(--safe-t)) 12px 10px;background:rgba(244,245,249,.92);backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line)}
-.chart-title{font-size:17px;font-weight:800;flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 10px}
-.chart-body{flex:1;padding:14px 16px calc(20px + var(--safe-b))}
-.chart-big{background:var(--card);border-radius:var(--radius);padding:18px 16px;margin-bottom:12px;box-shadow:var(--shadow);border:1px solid rgba(236,238,243,.7)}
-.chart-big-label{font-size:12px;color:var(--sub);font-weight:700;margin-bottom:6px}
-.chart-big-num{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1;margin-bottom:8px}
-.chart-big-sub{font-size:13px;color:var(--sub);font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.chart-toggle{display:flex;gap:8px;margin-bottom:12px}
-.chart-toggle .tog{flex:1;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:10px;font-size:14px;font-weight:700;color:var(--sub);cursor:pointer}
-.chart-toggle .tog.on{background:var(--txt);color:#fff;border-color:var(--txt)}
-.chart-wrap{background:var(--card);border-radius:var(--radius);padding:12px 10px 8px;box-shadow:var(--shadow);border:1px solid rgba(236,238,243,.7);height:220px}
-.trend-chart{width:100%;height:100%;display:block}
+.chart-head{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;padding:calc(12px + var(--safe-t)) 14px 12px;background:rgba(255,255,255,.92);backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line)}
+.chart-title{font-size:17px;font-weight:800;flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 12px;color:var(--txt)}
+.chart-body{flex:1;padding:14px 14px calc(24px + var(--safe-b))}
+.chart-big{background:var(--card);border-radius:var(--radius);padding:20px 18px;margin-bottom:14px;box-shadow:var(--shadow-card);border:1px solid rgba(236,238,243,.7);position:relative;overflow:hidden}
+.chart-big::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--up),var(--brand-2));opacity:0}
+.chart-big.up::before{background:linear-gradient(90deg,var(--up),var(--brand-2));opacity:1}
+.chart-big.down::before{background:linear-gradient(90deg,var(--down),#19C37D);opacity:1}
+.chart-big-label{font-size:12px;color:var(--sub);font-weight:700;margin-bottom:8px;letter-spacing:.3px}
+.chart-big-num{font-size:38px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.05;margin-bottom:12px;letter-spacing:.6px}
+.chart-big-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--sub)}
+.chart-big-row .cb-item{display:inline-flex;align-items:center;gap:5px;font-weight:500}
+.chart-big-row .cb-item b{font-weight:800;color:var(--txt);font-variant-numeric:tabular-nums}
+.chart-toggle{display:flex;gap:8px;margin-bottom:14px;background:var(--chip);padding:4px;border-radius:var(--radius-sm)}
+.chart-toggle .tog{flex:1;border:none;background:transparent;border-radius:10px;padding:9px 10px;font-size:14px;font-weight:700;color:var(--sub);cursor:pointer;transition:all .15s ease}
+.chart-toggle .tog.on{background:var(--card);color:var(--txt);box-shadow:0 1px 4px rgba(24,32,64,.08)}
+.chart-wrap{background:var(--card);border-radius:var(--radius);padding:10px 10px 6px;box-shadow:var(--shadow-card);border:1px solid rgba(236,238,243,.7);height:240px;overflow:hidden}
+.trend-chart{width:100%;height:100%;display:block;overflow:visible}
 .trend-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--sub);font-size:13px;font-weight:500}
-.chart-note{font-size:11.5px;color:var(--sub);margin-top:12px;text-align:center;font-weight:500}
+.chart-note{font-size:11px;color:var(--sub);margin-top:14px;text-align:center;font-weight:500;opacity:.85}
 
 /* ============ 底部导航 ============ */
 .bottombar{
   position:fixed;left:50%;transform:translateX(-50%);bottom:0;z-index:20;
   width:100%;max-width:1100px;
-  display:flex;background:rgba(255,255,255,.92);backdrop-filter:blur(12px);
+  display:flex;background:rgba(255,255,255,.94);backdrop-filter:blur(12px);
   border-top:1px solid var(--line);
-  padding:7px 0 calc(7px + var(--safe-b));
+  padding:7px 0 calc(9px + var(--safe-b));
 }
-.tab{flex:1;border:none;background:transparent;color:var(--sub);font-size:11px;font-weight:600;
+.tab{flex:1;border:none;background:transparent;color:var(--sub);font-size:11px;font-weight:700;
   display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 0;
   transition:color .14s ease}
 .tab .ti{font-size:20px;line-height:1;transition:transform .14s ease}
@@ -204,22 +216,22 @@ body{
   width:56px;height:56px;border-radius:50%;border:none;cursor:pointer;
   background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;font-size:30px;font-weight:300;line-height:1;
   display:flex;align-items:center;justify-content:center;
-  box-shadow:0 8px 22px rgba(238,43,59,.42);
+  box-shadow:0 8px 22px rgba(238,43,59,.35);
   transition:transform .14s ease;
 }
 .fab:active{transform:scale(.9) rotate(90deg)}
 
 /* ============ 搜索/添加 ============ */
 .searchbar{display:flex;gap:8px;align-items:center;background:var(--card);border:1px solid var(--line);
-  border-radius:14px;padding:11px 14px;margin-bottom:12px;box-shadow:var(--shadow)}
+  border-radius:var(--radius-sm);padding:11px 14px;margin-bottom:12px;box-shadow:var(--shadow-card)}
 .searchbar input{flex:1;border:none;outline:none;font-size:15px;background:transparent;color:var(--txt);font-variant-numeric:tabular-nums}
 .searchbar .go{color:var(--brand);font-weight:800;font-size:14px;background:none;border:none;cursor:pointer;padding:4px 6px}
-.res{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow)}
+.res{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow-card)}
 .res .nm{font-weight:800;font-size:14.5px}
 .res .cd{font-size:11.5px;color:var(--sub);margin-top:2px;font-weight:500}
 .res .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
 .res select{border:1px solid var(--line);border-radius:10px;padding:7px 9px;font-size:13px;background:var(--card);color:var(--txt)}
-.res .add{background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;border:none;border-radius:10px;padding:7px 15px;font-size:13px;font-weight:800;cursor:pointer;flex:0 0 auto;box-shadow:0 4px 12px rgba(238,43,59,.30)}
+.res .add{background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;border:none;border-radius:10px;padding:7px 15px;font-size:13px;font-weight:800;cursor:pointer;flex:0 0 auto;box-shadow:0 4px 12px rgba(238,43,59,.24)}
 .res .add.done{background:var(--chip);color:var(--sub);box-shadow:none}
 .add-hint{text-align:center;color:var(--sub);font-size:13px;padding:46px 24px;line-height:1.6}
 .add-hint .big{font-size:38px;margin-bottom:12px;opacity:.7}
@@ -232,24 +244,24 @@ body{
 .kv:last-child{border-bottom:none}
 .kv .k{color:var(--sub);font-weight:500}
 .spark{width:100%;height:170px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-  box-shadow:var(--shadow);margin:14px 0;padding:12px;display:block}
-.hold-edit{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:15px;margin-top:11px}
+  box-shadow:var(--shadow-card);margin:14px 0;padding:12px;display:block}
+.hold-edit{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-card);padding:15px;margin-top:11px}
 .hold-edit input{width:100%;border:1px solid var(--line);border-radius:11px;padding:11px 13px;font-size:15px;margin-top:7px;background:var(--card);color:var(--txt);font-variant-numeric:tabular-nums;transition:border-color .14s ease}
 .hold-edit input:focus{outline:none;border-color:var(--brand)}
 .btn{width:100%;border:none;border-radius:13px;padding:13px;font-size:15px;font-weight:800;cursor:pointer;margin-top:12px;transition:transform .12s ease}
 .btn:active{transform:scale(.98)}
-.btn-primary{background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;box-shadow:0 6px 16px rgba(238,43,59,.30)}
+.btn-primary{background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;box-shadow:0 6px 16px rgba(238,43,59,.24)}
 .btn-ghost{background:var(--chip);color:var(--txt)}
 
 /* ============ 分组管理 ============ */
-.gitem{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 15px;margin-bottom:10px;box-shadow:var(--shadow)}
+.gitem{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 15px;margin-bottom:10px;box-shadow:var(--shadow-card)}
 .gitem .gname{font-weight:800;font-size:15px;flex:1}
 .gitem .gcount{font-size:12px;color:var(--sub);font-weight:600}
 .gitem .gact{border:none;background:transparent;color:var(--sub);font-size:18px;cursor:pointer;padding:4px 7px;border-radius:8px;transition:background .12s ease}
 .gitem .gact:active{background:var(--chip)}
 .gitem .gact.del{color:var(--brand)}
 /* 数据导入导出 */
-.io-note{background:var(--chip);color:var(--sub);border-radius:12px;padding:11px 13px;
+.io-note{background:var(--chip);color:var(--sub);border-radius:var(--radius-sm);padding:11px 13px;
   font-size:12px;margin-top:16px;line-height:1.55;font-weight:500}
 .io-note b{color:var(--txt)}
 .io-btns{display:flex;flex-direction:column;gap:10px;margin-top:12px}
@@ -269,10 +281,10 @@ body{
 /* ============ 排序 / 简洁 工具栏 ============ */
 .toolbar{display:flex;gap:9px;margin:2px 2px 10px}
 .tbtn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
-  background:var(--card);border:1px solid var(--line);border-radius:12px;
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);
   padding:10px 12px;cursor:pointer;font-size:13px;font-weight:700;color:var(--sub);
-  box-shadow:var(--shadow);transition:transform .12s ease}
-.tbtn:active{transform:scale(.97)}
+  box-shadow:var(--shadow-card);transition:transform .12s ease,background .12s ease}
+.tbtn:active{transform:scale(.97);background:#FAFBFD}
 .tbtn .tlabel{color:var(--sub);font-weight:700}
 .tbtn .tval{color:var(--brand);font-weight:800;font-variant-numeric:tabular-nums}
 .tbtn .tval.on{color:var(--up)}
@@ -298,11 +310,12 @@ body{
 .view.compact .toolbar{margin-bottom:8px}
 
 /* ============ 排序 / 简洁 底部弹层 ============ */
-.sheet{background:var(--card);width:100%;max-width:560px;border-radius:20px 20px 0 0;
-  padding:6px 0 calc(20px + var(--safe-b));animation:up .22s ease}
-.sheet .stitle{font-size:12px;color:var(--sub);font-weight:800;padding:13px 20px 4px}
+.sheet{background:var(--card);width:100%;max-width:560px;border-radius:22px 22px 0 0;
+  padding:6px 0 calc(22px + var(--safe-b));animation:up .22s ease}
+.sheet .stitle{font-size:11px;color:var(--sub);font-weight:800;padding:14px 20px 6px;letter-spacing:.3px;text-transform:uppercase}
 .sheet .opt{display:flex;align-items:center;justify-content:space-between;
-  padding:14px 20px;font-size:15px;font-weight:600;cursor:pointer;color:var(--txt)}
+  padding:14px 20px;font-size:15px;font-weight:600;cursor:pointer;color:var(--txt);transition:background .12s ease}
+.sheet .opt:active{background:#FAFBFD}
 .sheet .opt.sel{color:var(--brand);font-weight:800}
 .sheet .opt .check{color:var(--brand);font-weight:800;font-size:15px;width:18px;text-align:center;flex:0 0 auto}
 .sheet .divider{height:1px;background:var(--line);margin:4px 20px}
@@ -311,20 +324,20 @@ body{
   position:relative;flex:0 0 auto;transition:background .15s ease}
 .sheet .switch.on{background:var(--up)}
 .sheet .switch .knob{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
-  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25);transition:left .15s ease}
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18);transition:left .15s ease}
 .sheet .switch.on .knob{left:21px}
 
 /* ============ 模态 ============ */
-.modal-mask{position:fixed;inset:0;background:rgba(15,18,26,.45);z-index:60;display:flex;align-items:flex-end;justify-content:center}
-.modal{background:var(--card);width:100%;max-width:560px;border-radius:20px 20px 0 0;padding:20px 20px calc(20px + var(--safe-b));animation:up .22s ease;
-  box-shadow:0 -8px 30px rgba(0,0,0,.15)}
+.modal-mask{position:fixed;inset:0;background:rgba(15,18,26,.42);z-index:60;display:flex;align-items:flex-end;justify-content:center}
+.modal{background:var(--card);width:100%;max-width:560px;border-radius:22px 22px 0 0;padding:20px 20px calc(22px + var(--safe-b));animation:up .22s ease;
+  box-shadow:0 -8px 30px rgba(0,0,0,.12)}
 @keyframes up{from{transform:translateY(24px);opacity:.5}to{transform:translateY(0);opacity:1}}
 .modal h3{margin:0 0 14px;font-size:17px;font-weight:800}
 .modal p{margin:0 0 8px;font-size:13.5px;color:var(--sub);line-height:1.6}
 .modal input{width:100%;border:1px solid var(--line);border-radius:11px;padding:12px 13px;font-size:15px;background:var(--card);color:var(--txt);font-variant-numeric:tabular-nums}
 .modal input:focus{outline:none;border-color:var(--brand)}
-.modal .mrow{display:flex;gap:10px;margin-top:16px}
-.modal button{flex:1;border:none;border-radius:12px;padding:13px;font-size:15px;font-weight:800;cursor:pointer;transition:transform .12s ease}
+.modal .mrow{display:flex;gap:10px;margin-top:18px}
+.modal button{flex:1;border:none;border-radius:13px;padding:13px;font-size:15px;font-weight:800;cursor:pointer;transition:transform .12s ease}
 .modal button:active{transform:scale(.98)}
 .modal .ok{background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff}
 .modal .cancel{background:var(--chip);color:var(--txt)}
