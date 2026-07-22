@@ -1366,7 +1366,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
   }
 
-  // 绘制今日收益/收益率走势图（支持收益/收益率切换）
+  // 绘制今日收益/收益率走势图（支持收益/收益率切换，盈亏线上方红色/下方绿色分段）
   function renderTrendChart(data, mode, w, h) {
     mode = mode || 'profit';
     if (!data || data.length < 2) return '<div class="trend-empty">暂无足够今日估值曲线数据</div>';
@@ -1381,28 +1381,54 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var y = padT + plotH - ((v - min) / rng) * plotH;
       return { x: x, y: y, t: p.time };
     });
-    var line = pts.map(function (p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
-    var area = pts[0].x.toFixed(1) + ',' + zeroY.toFixed(1) + ' ' + line + ' ' + pts[pts.length - 1].x.toFixed(1) + ',' + zeroY.toFixed(1);
-    var isUp = mode === 'profit' ? (data[data.length - 1].profit >= 0) : (data[data.length - 1].pct >= 0);
-    var color = isUp ? 'var(--up)' : 'var(--down)';
-    // 水平网格线（取 3 条）
+    // 零线上方（收益>0）用红色，下方（收益<0）用绿色；按零线拆分线段与填充区
+    function signOf(y) { return y < zeroY ? 1 : (y > zeroY ? -1 : 0); }
+    function colorOf(s) { return s > 0 ? 'var(--up)' : 'var(--down)'; }
+    var segments = [];
+    var cur = [pts[0]];
+    var curSign = signOf(pts[0].y);
+    for (var i = 1; i < pts.length; i++) {
+      var p = pts[i], s = signOf(p.y);
+      if (s === 0) s = curSign; // 恰在零线上，继承当前段
+      if (s !== curSign && curSign !== 0) {
+        var prev = pts[i - 1];
+        var r = (zeroY - prev.y) / (p.y - prev.y);
+        var ix = prev.x + (p.x - prev.x) * r;
+        var inter = { x: ix, y: zeroY };
+        cur.push(inter);
+        segments.push({ sign: curSign, pts: cur });
+        cur = [inter];
+        curSign = s;
+      }
+      cur.push(p);
+    }
+    if (cur.length) segments.push({ sign: curSign, pts: cur });
+    // 水平网格线
     var gridLines = '';
-    for (var i = 0; i <= 2; i++) {
-      var gy = padT + (plotH * i) / 2;
+    for (var gi = 0; gi <= 2; gi++) {
+      var gy = padT + (plotH * gi) / 2;
       gridLines += '<line x1="0" y1="' + gy.toFixed(1) + '" x2="' + w + '" y2="' + gy.toFixed(1) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>';
     }
-    // 时间标签：首尾靠边，防止截断
+    // 时间标签
     var times = [{ t: '9:30', a: 'start' }, { t: '11:30', a: 'middle' }, { t: '13:00', a: 'middle' }, { t: '15:00', a: 'end' }];
     var labels = times.map(function (o) {
       var x = timeToX(timeToMin(o.t), w);
       return '<text x="' + x + '" y="' + (h - 4) + '" text-anchor="' + o.a + '" font-size="10" fill="var(--sub)" font-weight="600">' + o.t + '</text>';
     }).join('');
+    // 分段填充与折线
+    var fills = '', lines = '';
+    segments.forEach(function (seg) {
+      var color = colorOf(seg.sign);
+      var first = seg.pts[0], last = seg.pts[seg.pts.length - 1];
+      var line = seg.pts.map(function (p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+      var area = first.x.toFixed(1) + ',' + zeroY.toFixed(1) + ' ' + line + ' ' + last.x.toFixed(1) + ',' + zeroY.toFixed(1);
+      fills += '<polygon points="' + area + '" fill="' + color + '" fill-opacity="0.10" stroke="none"></polygon>';
+      lines += '<polyline points="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>';
+    });
     return '<svg class="trend-chart" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
       gridLines +
       '<line x1="0" y1="' + zeroY.toFixed(1) + '" x2="' + w + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--sub)" stroke-width="1" opacity="0.25"/>' +
-      '<polygon points="' + area + '" fill="' + color + '" fill-opacity="0.10" stroke="none"></polygon>' +
-      '<polyline points="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>' +
-      labels + '</svg>';
+      fills + lines + labels + '</svg>';
   }
 
   function openTodayChart() {
@@ -1680,7 +1706,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=16').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=17').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
