@@ -18,13 +18,22 @@
   var tbTitle = $('#tbTitle');
 
   // ---------------- 状态 ----------------
-  var state = { funds: {}, groups: [], defaultGroup: '', version: 1 };
+  var state = {
+    funds: {}, groups: [], defaultGroup: '', version: 1,
+    indices: [
+      { code: 'sh000001', name: '上证指数', price: 0, prev: 0, open: 0, high: 0, low: 0, chg: 0, pct: 0, vol: 0, amt: 0, time: '', minData: [] },
+      { code: 'sz399300', name: '沪深300', price: 0, prev: 0, open: 0, high: 0, low: 0, chg: 0, pct: 0, vol: 0, amt: 0, time: '', minData: [] },
+      { code: 'sz399006', name: '创业板指', price: 0, prev: 0, open: 0, high: 0, low: 0, chg: 0, pct: 0, vol: 0, amt: 0, time: '', minData: [] }
+    ]
+  };
   var ui = {
     view: 'home', filter: '全部', selectedCode: null,
     searchKw: '', searchResults: [], searchTargets: {}, searching: false,
     wide: false, lastUpd: 0, refreshing: false,
-    homeSort: 'today_desc', portSort: 'hold_desc', compact: false
+    homeSort: 'today_desc', portSort: 'hold_desc', compact: false,
+    indexSlide: 0
   };
+  var tickerTimer = null;
   // 各页允许的排序项：自选=今日预估/今日预估率；收益=历史收益/历史收益率（两页独立，不联动）
   var HOME_SORTS = ['today_desc', 'today_asc', 'todayrate_desc', 'todayrate_asc'];
   var PORT_SORTS = ['hold_desc', 'hold_asc', 'holdrate_desc', 'holdrate_asc'];
@@ -414,6 +423,103 @@
 
   function setSpin(on) { var b = $('#btnRefresh'); if (b) b.classList.toggle('spin', on); }
 
+  // ---------------- 指数行情 ----------------
+  function loadIndices() {
+    var codes = state.indices.map(function (i) { return i.code; }).join(',');
+    fetch('https://qt.gtimg.cn/q=' + codes)
+      .then(function (r) { return r.text(); })
+      .then(function (text) {
+        var re = /v_([a-z0-9]+)="([^"]*)"/g, m;
+        while ((m = re.exec(text)) !== null) {
+          var code = m[1], f = m[2].split('~');
+          var idx = state.indices.find(function (x) { return x.code === code; });
+          if (!idx) continue;
+          idx.name = f[1] || idx.name;
+          idx.price = parseFloat(f[3]) || 0;
+          idx.prev = parseFloat(f[4]) || 0;
+          idx.open = parseFloat(f[5]) || 0;
+          idx.high = parseFloat(f[33]) || 0;
+          idx.low = parseFloat(f[34]) || 0;
+          idx.chg = parseFloat(f[31]) || 0;
+          idx.pct = parseFloat(f[32]) || 0;
+          idx.vol = parseFloat(f[36]) || 0;
+          idx.amt = parseFloat(f[37]) || 0;
+          idx.time = f[30] ? (f[30].slice(8, 10) + ':' + f[30].slice(10, 12)) : '';
+        }
+        updateIndexCards();
+      }).catch(function () {});
+  }
+  function loadIndexMinute(idx, cb) {
+    fetch('https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=' + idx.code)
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var arr = (((j.data || {})[idx.code] || {}).data || {}).data || [];
+        idx.minData = arr.map(function (s) {
+          var p = s.split(' ');
+          return { time: p[0], price: parseFloat(p[1]), vol: parseFloat(p[2]), amt: parseFloat(p[3]) };
+        });
+        if (cb) cb();
+      }).catch(function () { if (cb) cb(); });
+  }
+  function indexCardHTML(idx) {
+    var cls = colorClass(idx.chg);
+    var priceTxt = idx.price ? fmt(idx.price, 2) : '—';
+    var pctTxt = idx.pct ? (idx.pct >= 0 ? '+' : '') + fmt(idx.pct, 2) + '%' : '—';
+    return '<div class="idx-card" data-act="openIndex" data-code="' + idx.code + '">' +
+      '<span class="idx-name">' + esc(idx.name) + '</span>' +
+      '<span class="idx-price ' + cls + '">' + priceTxt + '</span>' +
+      '<span class="idx-pill chg-pill ' + cls + '">' + pctTxt + '</span>' +
+      '</div>';
+  }
+  function startIndexTicker() {
+    if (tickerTimer) clearInterval(tickerTimer);
+    tickerTimer = setInterval(function () {
+      var track = $('#idxTrack');
+      if (!track) return;
+      var n = state.indices.length;
+      ui.indexSlide = (ui.indexSlide + 1) % n;
+      track.style.transform = 'translateX(-' + (ui.indexSlide * 100) + '%)';
+      updateIndexDots();
+    }, 3500);
+  }
+  function updateIndexDots() {
+    var dots = document.querySelectorAll('.idx-dot');
+    dots.forEach(function (d, i) { d.classList.toggle('on', i === ui.indexSlide); });
+  }
+  function bindIndexSwipe() {
+    var ticker = document.querySelector('.idx-ticker');
+    var track = $('#idxTrack');
+    if (!ticker || !track) return;
+    var startX = 0, currentX = 0, dragging = false, width = 0;
+    ticker.addEventListener('pointerdown', function (ev) {
+      dragging = true; startX = ev.clientX; width = ticker.getBoundingClientRect().width;
+      try { ticker.setPointerCapture(ev.pointerId); } catch (e) {}
+      ev.preventDefault();
+    });
+    ticker.addEventListener('pointermove', function (ev) {
+      if (!dragging) return;
+      currentX = ev.clientX;
+      var dx = currentX - startX;
+      var base = -(ui.indexSlide * width);
+      track.style.transition = 'none';
+      track.style.transform = 'translateX(' + (base + dx) + 'px)';
+    });
+    function end(ev) {
+      if (!dragging) return;
+      dragging = false;
+      var dx = currentX - startX;
+      var n = state.indices.length;
+      if (dx < -40 && ui.indexSlide < n - 1) ui.indexSlide++;
+      else if (dx > 40 && ui.indexSlide > 0) ui.indexSlide--;
+      track.style.transition = 'transform .3s ease';
+      track.style.transform = 'translateX(-' + (ui.indexSlide * 100) + '%)';
+      updateIndexDots();
+      if (ev && ev.pointerId) { try { ticker.releasePointerCapture(ev.pointerId); } catch (e) {} }
+    }
+    ticker.addEventListener('pointerup', end);
+    ticker.addEventListener('pointercancel', end);
+  }
+
   // ---------------- 渲染：通用 ----------------
   function render() {
     var titleMap = { home: '自选基金', portfolio: '持仓收益', groups: '分组管理', add: '添加基金', detail: (ui.selectedCode && state.funds[ui.selectedCode] ? state.funds[ui.selectedCode].name : '详情') };
@@ -493,10 +599,18 @@
 
   // ---------------- 渲染：首页 ----------------
   function renderHome() {
+    if (tickerTimer) clearInterval(tickerTimer);
     var open = marketOpen();
     var axisToday = curSort().indexOf('today') >= 0;
     var html = '';
-    html += '<div class="market-row"><div class="market ' + (open ? 'open' : '') + '"><span class="dot"></span>' + (open ? '盘中交易中' : '非交易时段') + '</div><span class="upd">' + lastUpdText() + '</span></div>';
+    html += '<div class="market-row">' +
+      '<div class="market ' + (open ? 'open' : '') + '"><span class="dot"></span>' + (open ? '盘中' : '休市') + '</div>' +
+      '<div class="idx-ticker" id="idxTicker">' +
+        '<div class="idx-track" id="idxTrack">' + state.indices.map(indexCardHTML).join('') + '</div>' +
+        '<div class="idx-dots">' + state.indices.map(function (_, i) { return '<span class="idx-dot ' + (i === ui.indexSlide ? 'on' : '') + '"></span>'; }).join('') + '</div>' +
+      '</div>' +
+      '<span class="upd">' + lastUpdText() + '</span>' +
+      '</div>';
     // 分组标签栏：按当前排序口径显示历史收益或今日收益
     html += '<div class="gtabs">';
     var gtabSub = function (profit, count) {
@@ -550,6 +664,16 @@
       html += list.length ? list.map(function (card) { return cardHTML(card.f, card.hs, cardMode); }).join('') : '<div class="empty"><div class="big">📭</div>还没有基金<br>点右下角 “＋” 添加，或去“收益”页</div>';
     }
     view.innerHTML = html;
+    startIndexTicker();
+    bindIndexSwipe();
+  }
+
+  function updateIndexCards() {
+    var track = $('#idxTrack');
+    if (!track) return;
+    track.innerHTML = state.indices.map(indexCardHTML).join('');
+    var dots = document.querySelector('.idx-dots');
+    if (dots) dots.innerHTML = state.indices.map(function (_, i) { return '<span class="idx-dot ' + (i === ui.indexSlide ? 'on' : '') + '"></span>'; }).join('');
   }
 
   function emptyMini() { return '<div class="empty" style="padding:30px 10px">该分组暂无基金</div>'; }
@@ -1162,6 +1286,202 @@
     wrap.addEventListener('pointerleave', function (ev) { if (dragging) { try { wrap.releasePointerCapture(ev.pointerId); } catch (e) {} } });
   }
 
+  // 指数分时走势图（按昨收作参考线，线上方红色、下方绿色）
+  function renderIndexChart(minData, prevClose, w, h) {
+    if (!minData || minData.length < 2) return { svg: '<div class="trend-empty">暂无分时数据</div>', meta: null };
+    var vals = minData.map(function (p) { return p.price; });
+    var min = Math.min(prevClose, Math.min.apply(null, vals));
+    var max = Math.max(prevClose, Math.max.apply(null, vals));
+    var rng = (max - min) || 1;
+    var padT = 10, padB = 18, plotH = h - padT - padB;
+    var zeroY = padT + plotH - ((prevClose - min) / rng) * plotH;
+    var pts = minData.map(function (p) {
+      var t = p.time.length === 4 ? (p.time.slice(0, 2) + ':' + p.time.slice(2)) : p.time;
+      var x = timeToX(timeToMin(t), w);
+      var y = padT + plotH - ((p.price - min) / rng) * plotH;
+      return { x: x, y: y, t: t, price: p.price, vol: p.vol, amt: p.amt };
+    });
+    function signOf(y) { return y < zeroY ? 1 : (y > zeroY ? -1 : 0); }
+    function colorOf(s) { return s > 0 ? 'var(--up)' : 'var(--down)'; }
+    var segments = [], cur = [pts[0]], curSign = signOf(pts[0].y);
+    for (var i = 1; i < pts.length; i++) {
+      var p = pts[i], s = signOf(p.y);
+      if (s === 0) s = curSign;
+      if (s !== curSign && curSign !== 0) {
+        var prev = pts[i - 1];
+        var r = (zeroY - prev.y) / (p.y - prev.y);
+        var ix = prev.x + (p.x - prev.x) * r;
+        var inter = { x: ix, y: zeroY };
+        cur.push(inter); segments.push({ sign: curSign, pts: cur });
+        cur = [inter]; curSign = s;
+      }
+      cur.push(p);
+    }
+    if (cur.length) segments.push({ sign: curSign, pts: cur });
+    var gridLines = '';
+    for (var gi = 0; gi <= 2; gi++) {
+      var gy = padT + (plotH * gi) / 2;
+      gridLines += '<line x1="0" y1="' + gy.toFixed(1) + '" x2="' + w + '" y2="' + gy.toFixed(1) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>';
+    }
+    var times = [{ t: '9:30', a: 'start' }, { t: '11:30', a: 'middle' }, { t: '13:00', a: 'middle' }, { t: '15:00', a: 'end' }];
+    var labels = times.map(function (o) {
+      var x = timeToX(timeToMin(o.t), w);
+      return '<text x="' + x + '" y="' + (h - 4) + '" text-anchor="' + o.a + '" font-size="10" fill="var(--sub)" font-weight="600">' + o.t + '</text>';
+    }).join('');
+    var fills = '', lines = '';
+    segments.forEach(function (seg) {
+      var color = colorOf(seg.sign);
+      var first = seg.pts[0], last = seg.pts[seg.pts.length - 1];
+      var line = seg.pts.map(function (p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+      var area = first.x.toFixed(1) + ',' + zeroY.toFixed(1) + ' ' + line + ' ' + last.x.toFixed(1) + ',' + zeroY.toFixed(1);
+      fills += '<polygon points="' + area + '" fill="' + color + '" fill-opacity="0.10" stroke="none"></polygon>';
+      lines += '<polyline points="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>';
+    });
+    var svg = '<svg class="trend-chart" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+      gridLines +
+      '<line x1="0" y1="' + zeroY.toFixed(1) + '" x2="' + w + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--sub)" stroke-width="1" opacity="0.25" stroke-dasharray="4,3"/>' +
+      fills + lines + labels + '</svg>';
+    return { svg: svg, meta: { min: min, rng: rng, padT: padT, plotH: plotH, w: w, h: h, zeroY: zeroY, prevClose: prevClose } };
+  }
+
+  function openIndexDetail(code) {
+    var idx = state.indices.find(function (x) { return x.code === code; });
+    if (!idx) return;
+    var root = $('#modalRoot');
+    root.innerHTML = '<div class="modal-mask page-modal">' +
+      '<div class="chart-page">' +
+        '<div class="chart-head"><button class="icon-btn back" data-m="close">←</button><div class="chart-title">' + esc(idx.name) + '</div><div style="width:44px"></div></div>' +
+        '<div class="chart-body">' +
+          '<div class="idx-loading">正在加载行情…</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+    root.querySelector('[data-m="close"]').onclick = function () { root.innerHTML = ''; };
+    root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
+    function renderIdx() {
+      var cls = colorClass(idx.chg);
+      var priceTxt = idx.price ? fmt(idx.price, 2) : '—';
+      var chgTxt = idx.chg ? (idx.chg >= 0 ? '+' : '−') + fmt(Math.abs(idx.chg), 2) : '—';
+      var pctTxt = idx.pct ? (idx.pct >= 0 ? '+' : '') + fmt(idx.pct, 2) + '%' : '—';
+      var chart = renderIndexChart(idx.minData, idx.prev || idx.price, 360, 190);
+      var svg = chart.svg, meta = chart.meta;
+      var dragHTML = meta ? '<div class="cc" id="cc"><div class="cc-line" id="ccLine"></div><div class="cc-tip" id="ccTip"></div></div>' : '';
+      var volTxt = idx.vol ? fmt(idx.vol / 1000000, 2) + '亿手' : '—';
+      var amtTxt = idx.amt ? fmt(idx.amt / 10000, 2) + '亿' : '—';
+      root.querySelector('.chart-body').innerHTML =
+        '<div class="chart-big ' + cls + '">' +
+          '<div class="chart-big-label">' + esc(idx.name) + ' · 当前点位</div>' +
+          '<div class="chart-big-num">' + priceTxt + '</div>' +
+          '<div class="chart-big-row">' +
+            '<span class="cb-item"><b>' + chgTxt + '</b>涨跌额</span>' +
+            '<span class="cb-item"><b>' + pctTxt + '</b>涨跌幅</span>' +
+            '<span class="state-badge">' + (idx.time || '实时') + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="idx-grid">' +
+          '<div class="idx-cell"><span class="idx-k">今开</span><span class="idx-v">' + (idx.open ? fmt(idx.open, 2) : '—') + '</span></div>' +
+          '<div class="idx-cell"><span class="idx-k">昨收</span><span class="idx-v">' + (idx.prev ? fmt(idx.prev, 2) : '—') + '</span></div>' +
+          '<div class="idx-cell"><span class="idx-k">最高</span><span class="idx-v">' + (idx.high ? fmt(idx.high, 2) : '—') + '</span></div>' +
+          '<div class="idx-cell"><span class="idx-k">最低</span><span class="idx-v">' + (idx.low ? fmt(idx.low, 2) : '—') + '</span></div>' +
+          '<div class="idx-cell"><span class="idx-k">成交量</span><span class="idx-v">' + volTxt + '</span></div>' +
+          '<div class="idx-cell"><span class="idx-k">成交额</span><span class="idx-v">¥' + amtTxt + '</span></div>' +
+        '</div>' +
+        '<div class="chart-wrap" id="cWrap">' + svg + dragHTML + '</div>' +
+        '<div class="chart-note">分时走势 · 横轴可拖动查看任意时刻 · 数据来源腾讯财经</div>';
+      if (meta && idx.minData && idx.minData.length) bindIndexDrag(idx.minData, meta, idx);
+    }
+    if (idx.minData && idx.minData.length) { renderIdx(); }
+    else { loadIndexMinute(idx, renderIdx); }
+  }
+
+  function bindIndexDrag(minData, meta, idx) {
+    var root = $('#modalRoot');
+    var wrap = root.querySelector('#cWrap');
+    var cc = root.querySelector('#cc');
+    var ccLine = root.querySelector('#ccLine');
+    var ccTip = root.querySelector('#ccTip');
+    var bigEl = root.querySelector('.chart-big');
+    var bigNum = root.querySelector('.chart-big-num');
+    var bigRow = root.querySelector('.chart-big-row');
+    if (!wrap) return;
+    var ts = minData.map(function (d) { return timeToMin(d.time.length === 4 ? (d.time.slice(0, 2) + ':' + d.time.slice(2)) : d.time); });
+    function xToMinFromX(x, w) {
+      var half = w * 0.5;
+      if (x <= half) return 570 + (x / half) * 120;
+      return 780 + ((x - half) / half) * 120;
+    }
+    function minToTime(m) {
+      m = Math.round(m); var hh = Math.floor(m / 60), mm = m % 60;
+      return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+    }
+    function interpolateAt(xvb) {
+      var t = xToMinFromX(xvb, meta.w);
+      var a = 0, b = ts.length - 1;
+      if (t <= ts[0]) { a = b = 0; }
+      else if (t >= ts[ts.length - 1]) { a = b = ts.length - 1; }
+      else { for (var i = 0; i < ts.length - 1; i++) { if (t >= ts[i] && t <= ts[i + 1]) { a = i; b = i + 1; break; } } }
+      var price, vol, amt;
+      if (a === b) { price = minData[a].price; vol = minData[a].vol; amt = minData[a].amt; }
+      else {
+        var r = (t - ts[a]) / (ts[b] - ts[a]);
+        price = minData[a].price + (minData[b].price - minData[a].price) * r;
+        vol = minData[a].vol + (minData[b].vol - minData[a].vol) * r;
+        amt = minData[a].amt + (minData[b].amt - minData[a].amt) * r;
+      }
+      var y = meta.padT + meta.plotH - ((price - meta.min) / meta.rng) * meta.plotH;
+      var chg = price - meta.prevClose;
+      return { time: minToTime(t), price: price, chg: chg, pct: meta.prevClose ? chg / meta.prevClose * 100 : 0, y: y, vol: vol, amt: amt };
+    }
+    var lastCls = colorClass(idx.chg);
+    var lastNum = bigNum.textContent;
+    var lastRow = bigRow.innerHTML;
+    function showAt(xvb) {
+      var r = interpolateAt(xvb);
+      var pctLeft = (xvb / meta.w) * 100;
+      var pctTop = (r.y / meta.h) * 100;
+      cc.style.display = 'block';
+      ccLine.style.left = pctLeft + '%';
+      ccTip.style.left = pctLeft + '%';
+      ccTip.style.top = pctTop + '%';
+      var up = r.chg >= 0;
+      ccTip.className = 'cc-tip ' + (up ? 'up' : 'down');
+      ccTip.innerHTML = '<div class="cc-time">' + r.time + '</div>' +
+        '<div class="cc-row"><span>点位</span><b>' + fmt(r.price, 2) + '</b></div>' +
+        '<div class="cc-row"><span>涨跌</span><b>' + (r.chg >= 0 ? '+' : '−') + fmt(Math.abs(r.chg), 2) + '</b></div>';
+      bigEl.className = 'chart-big ' + (up ? 'up' : 'down');
+      bigNum.textContent = fmt(r.price, 2);
+      bigRow.innerHTML = '<span class="cb-item"><b>' + (r.chg >= 0 ? '+' : '−') + fmt(Math.abs(r.chg), 2) + '</b>涨跌额</span>' +
+        '<span class="cb-item"><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b>涨跌幅</span>';
+    }
+    function resetToLast() {
+      cc.style.display = 'none';
+      bigEl.className = 'chart-big ' + lastCls;
+      bigNum.textContent = lastNum;
+      bigRow.innerHTML = lastRow;
+    }
+    var dragging = false;
+    function xvbFromEv(ev) {
+      var rect = wrap.getBoundingClientRect();
+      var x = (ev.clientX - rect.left) / rect.width * meta.w;
+      return Math.max(0, Math.min(meta.w, x));
+    }
+    wrap.addEventListener('pointerdown', function (ev) {
+      dragging = true;
+      try { wrap.setPointerCapture(ev.pointerId); } catch (e) {}
+      showAt(xvbFromEv(ev));
+      ev.preventDefault();
+    });
+    wrap.addEventListener('pointermove', function (ev) {
+      if (!dragging) return;
+      showAt(xvbFromEv(ev));
+      ev.preventDefault();
+    });
+    function end(ev) { if (dragging) { dragging = false; resetToLast(); } }
+    wrap.addEventListener('pointerup', end);
+    wrap.addEventListener('pointercancel', end);
+    wrap.addEventListener('pointerleave', function (ev) { if (dragging) { try { wrap.releasePointerCapture(ev.pointerId); } catch (e) {} } });
+  }
+
   function openSortSheet() {
     var root = $('#modalRoot');
     var opts = ui.view === 'portfolio' ? [
@@ -1343,6 +1663,7 @@
         case 'toggleCompactSheet': ui.compact = !ui.compact; save(); render(); openSortSheet(); break;
         case 'closeSheet': if ($('#modalRoot')) $('#modalRoot').innerHTML = ''; break;
         case 'openTodayChart': openTodayChart(); break;
+        case 'openIndex': openIndexDetail(code); break;
         case 'exportExcel': exportExcel(); break;
         case 'exportTemplate': exportTemplate(); break;
         case 'pickExcel': var fi = document.getElementById('fileExcel'); if (fi) fi.click(); break;
@@ -1390,9 +1711,11 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=18').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=19').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
+    loadIndices();
+    setInterval(loadIndices, 30000); // 指数行情 30s 轮询
   }
 
   if (document.readyState !== 'loading') init();
