@@ -756,13 +756,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     if (ui.filter === '全部') {
       var map = {};
       allPositions().forEach(function (p) {
-        if (!(p.h.shares > 0) && !(p.h.costPrice > 0)) return;
         (map[p.code] = map[p.code] || { f: p.f, hs: [] }).hs.push(p.h);
       });
       return Object.keys(map).map(function (c) { return map[c]; });
     }
     return allPositions()
-      .filter(function (p) { return (p.h.group || '') === ui.filter && ((p.h.shares > 0) || (p.h.costPrice > 0)); })
+      .filter(function (p) { return (p.h.group || '') === ui.filter; })
       .map(function (p) { return { f: p.f, hs: [p.h] }; });
   }
   // 全部基金按 code 聚合为卡片对象（忽略当前筛选），供首页“全部”标签汇总
@@ -1014,30 +1013,53 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var pos = allPositions().filter(function (p) { return p.h.shares > 0; });
     var totMV = 0, totCost = 0, totProfit = 0;
     pos.forEach(function (p) {
-      var hv = holdingDerived(p.f, p.h); if (hv) { totMV += hv.marketValue; totCost += hv.cost; totProfit += hv.profit; }
+      var hv = holdingDerived(p.f, p.h); if (hv) { totMV += hv.marketValue; totCost += hv.cost * hv.shares; totProfit += hv.profit; }
     });
     var pct = totCost > 0 ? totProfit / totCost * 100 : 0;
     var c = colorClass(totProfit);
     var html = '';
     html += '<div class="section-h">持仓总览（' + currentValLabel() + '）</div>';
     html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + c + '">' + (totProfit >= 0 ? '+' : '') + '¥' + fmt(totProfit, 2) + '</div><div class="chg-pill ' + c + '">' + (totProfit >= 0 ? '+' : '') + fmt(pct, 2) + '%</div></div>';
-    html += '<div class="pstats"><div class="ps"><div class="pl">总市值</div><div class="pv">¥' + fmt(totMV, 2) + '</div></div><div class="ps"><div class="pl">总成本</div><div class="pv">¥' + fmt(totCost, 2) + '</div></div></div></div>';
+    html += '<div class="pstats"><div class="ps"><div class="pl">总市值</div><div class="pv">¥' + fmt(totMV, 2) + '</div></div><div class="ps"><div class="pl">总成本</div><div class="pv">¥' + fmt(totCost, 2) + '</div></div></div>';
     html += toolbarHTML();
     // 按基金聚合（多分组合并成一只）
     var map = {};
     pos.forEach(function (p) { (map[p.code] = map[p.code] || { f: p.f, hs: [] }).hs.push(p.h); });
     var cards = Object.keys(map).map(function (c) { return map[c]; });
+    var axisToday = (ui.sort || 'hold_desc').indexOf('today') >= 0;
     cards = sortFunds(cards);
     html += '<div class="section-h">逐只明细（' + cards.length + '）</div>';
     if (!cards.length) {
       html += '<div class="empty"><div class="big">💰</div>还没有设置持仓<br>在基金详情里填份额和成本价</div>';
     } else {
       cards.forEach(function (card) {
-        var f = card.f, agg = aggregate(f, card.hs), hc = colorClass(agg.totalProfit);
-        html += '<div class="fcard" data-act="open" data-code="' + f.code + '"><div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + '</div></div>';
-        html += '<div class="val"><div class="v ' + hc + '">' + (agg.totalProfit >= 0 ? '+' : '') + '¥' + fmt(agg.totalProfit, 0) + '</div><div class="chg-pill ' + hc + '">' + (agg.totalProfit >= 0 ? '+' : '') + fmt(agg.totalProfitPct, 2) + '%</div></div></div>';
+        var f = card.f, agg = aggregate(f, card.hs), d = displayOf(f);
+        var valText, valCls, pctText, badge = '';
+        if (axisToday && agg.today != null) {
+          var sb = stateBadge(d);
+          badge = sb ? '<span class="state-badge ' + sb.c + '">' + sb.t + '</span>' : '';
+          valText = (agg.today >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(agg.today), 0);
+          valCls = agg.today >= 0 ? 'up' : 'down';
+          pctText = (agg.today >= 0 ? '+' : '') + fmt(agg.todayPct, 2) + '%';
+        } else {
+          valText = (agg.totalProfit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(agg.totalProfit), 0);
+          valCls = agg.totalProfit >= 0 ? 'up' : 'down';
+          pctText = (agg.totalProfit >= 0 ? '+' : '') + fmt(agg.totalProfitPct, 2) + '%';
+          if (axisToday) badge = '<span class="state-badge est">无今日数据</span>';
+        }
         var grpTxt = card.hs.length > 1 ? (card.hs.length + '个分组') : ((card.hs[0] && (card.hs[0].group || '')) || '');
-        html += '<div class="bot"><span>市值 ¥' + fmt(agg.totalMV, 0) + '</span><span>成本 ¥' + fmt(agg.totalCost, 0) + '</span>' + (grpTxt ? ('<span class="grp-tag">' + esc(grpTxt) + '</span>') : '') + '</div></div>';
+        html += '<div class="fcard" data-act="open" data-code="' + f.code + '"><div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + '</div></div>';
+        html += '<div class="val"><div class="v ' + valCls + '">' + valText + '</div><div class="chg-pill ' + valCls + '">' + pctText + '</div>' + badge + '</div></div>';
+        var valLabelTxt;
+        if (axisToday && agg.today != null) {
+          if (d.navUpdated) valLabelTxt = '今日收益(真实)';
+          else if (d.estimate) valLabelTxt = '今日预估';
+          else if (d.latestNav) valLabelTxt = '今日收益(最新净值)';
+          else valLabelTxt = '今日收益';
+        } else {
+          valLabelTxt = '历史收益';
+        }
+        html += '<div class="bot"><span>' + valLabelTxt + '</span><span>市值 ¥' + fmt(agg.totalMV, 0) + '</span><span>成本 ¥' + fmt(agg.totalCost, 0) + '</span>' + (grpTxt ? ('<span class="grp-tag">' + esc(grpTxt) + '</span>') : '') + '</div></div>';
       });
     }
     view.innerHTML = html;
@@ -1096,7 +1118,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     ui.view = 'add'; ui.searching = true; ui.searchResults = []; render();
     searchFunds(kw).then(function (list) {
       ui.searching = false; ui.searchResults = list;
-      list.forEach(function (r) { if (!(r.code in ui.searchTargets)) ui.searchTargets[r.code] = state.defaultGroup || (state.groups[0] || ''); });
+      var defG = (state.groups.indexOf(ui.filter) >= 0) ? ui.filter : (state.defaultGroup || (state.groups[0] || ''));
+      list.forEach(function (r) { if (!(r.code in ui.searchTargets)) ui.searchTargets[r.code] = defG; });
       render();
     });
   }
@@ -1104,7 +1127,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   function addFund(code) {
     var r = ui.searchResults.filter(function (x) { return x.code === code; })[0] || { code: code, name: '', type: '' };
     var name = r.name || code;
-    var group = ui.searchTargets[code] || '';
+    var sel = document.querySelector('select.grp-sel[data-code="' + code + '"]');
+    var group = (sel && sel.value) || ui.searchTargets[code] || '';
     var f = state.funds[code];
     toast('正在添加…');
     if (!f) {
@@ -1442,7 +1466,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=10').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=11').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
