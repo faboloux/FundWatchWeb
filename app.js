@@ -958,23 +958,34 @@
     var vals = data.map(function (p) { return mode === 'profit' ? p.profit : p.pct; });
     var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
     var rng = (max - min) || 1;
-    var zeroY = h - ((0 - min) / rng) * (h - 16) - 8;
+    var padT = 10, padB = 18, plotH = h - padT - padB;
+    var zeroY = padT + plotH - ((0 - min) / rng) * plotH;
     var pts = data.map(function (p) {
       var v = mode === 'profit' ? p.profit : p.pct;
       var x = timeToX(timeToMin(p.time), w);
-      var y = h - ((v - min) / rng) * (h - 16) - 8;
+      var y = padT + plotH - ((v - min) / rng) * plotH;
       return { x: x, y: y, t: p.time };
     });
     var line = pts.map(function (p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
     var area = pts[0].x.toFixed(1) + ',' + zeroY.toFixed(1) + ' ' + line + ' ' + pts[pts.length - 1].x.toFixed(1) + ',' + zeroY.toFixed(1);
-    var color = (mode === 'profit' ? (data[data.length - 1].profit >= 0 ? 'var(--up)' : 'var(--down)') : (data[data.length - 1].pct >= 0 ? 'var(--up)' : 'var(--down)'));
-    var labels = ['9:30', '11:30', '13:00', '15:00'].map(function (t) {
-      var x = timeToX(timeToMin(t), w);
-      return '<text x="' + x + '" y="' + (h - 2) + '" text-anchor="middle" font-size="10" fill="var(--sub)">' + t + '</text>';
+    var isUp = mode === 'profit' ? (data[data.length - 1].profit >= 0) : (data[data.length - 1].pct >= 0);
+    var color = isUp ? 'var(--up)' : 'var(--down)';
+    // 水平网格线（取 3 条）
+    var gridLines = '';
+    for (var i = 0; i <= 2; i++) {
+      var gy = padT + (plotH * i) / 2;
+      gridLines += '<line x1="0" y1="' + gy.toFixed(1) + '" x2="' + w + '" y2="' + gy.toFixed(1) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>';
+    }
+    // 时间标签：首尾靠边，防止截断
+    var times = [{ t: '9:30', a: 'start' }, { t: '11:30', a: 'middle' }, { t: '13:00', a: 'middle' }, { t: '15:00', a: 'end' }];
+    var labels = times.map(function (o) {
+      var x = timeToX(timeToMin(o.t), w);
+      return '<text x="' + x + '" y="' + (h - 4) + '" text-anchor="' + o.a + '" font-size="10" fill="var(--sub)" font-weight="600">' + o.t + '</text>';
     }).join('');
     return '<svg class="trend-chart" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
-      '<line x1="0" y1="' + zeroY.toFixed(1) + '" x2="' + w + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--line)" stroke-width="1"/>' +
-      '<polygon points="' + area + '" fill="' + color + '22" stroke="none"></polygon>' +
+      gridLines +
+      '<line x1="0" y1="' + zeroY.toFixed(1) + '" x2="' + w + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--sub)" stroke-width="1" opacity="0.25"/>' +
+      '<polygon points="' + area + '" fill="' + color + '" fill-opacity="0.10" stroke="none"></polygon>' +
       '<polyline points="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>' +
       labels + '</svg>';
   }
@@ -989,23 +1000,28 @@
     var vlabel = currentValLabel();
     var sbMap = { '盘中实时': { t: '实时', c: 'live' }, '今日真实净值': { t: '真实净值', c: 'real' }, '收盘估值(预估)': { t: '收盘预估', c: 'est' } };
     var sb2 = sbMap[vlabel] || { t: '预估', c: 'est' };
-    var title = (scope === '全部' ? '全部' : '「' + esc(scope) + '」') + '今日' + (mode === 'profit' ? '收益' : '收益率') + '走势';
+    var title = (scope === '全部' ? '全部' : esc(scope)) + ' · 今日走势';
     var numVal = last ? (mode === 'profit' ? last.profit : last.pct) : 0;
     var numCls = numVal >= 0 ? 'up' : 'down';
     var numTxt = (mode === 'profit'
       ? (numVal >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(numVal), 2)
       : (numVal >= 0 ? '+' : '') + fmt(numVal, 2) + '%');
-    var subTxt = last
-      ? (mode === 'profit' ? '收益率 ' + (last.pct >= 0 ? '+' : '') + fmt(last.pct, 2) + '%' : '收益 ' + (last.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(last.profit), 2)) + ' · ' + last.time
-      : '暂无数据';
-    var svg = renderTrendChart(data, mode, 360, 180);
+    var subProfitTxt = last ? ((last.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(last.profit), 2)) : '—';
+    var subRateTxt = last ? ((last.pct >= 0 ? '+' : '') + fmt(last.pct, 2) + '%') : '—';
+    var svg = renderTrendChart(data, mode, 360, 190);
     root.innerHTML = '<div class="modal-mask page-modal">' +
       '<div class="chart-page">' +
-        '<div class="chart-head"><button class="icon-btn" data-m="close">←</button><div class="chart-title">' + title + '</div><div style="width:38px"></div></div>' +
+        '<div class="chart-head"><button class="icon-btn back" data-m="close">←</button><div class="chart-title">' + title + '</div><div style="width:44px"></div></div>' +
         '<div class="chart-body">' +
-          '<div class="chart-big"><div class="chart-big-label">当前' + (mode === 'profit' ? '预估收益' : '预估收益率') + '（' + sb2.t + '）</div>' +
-            '<div class="chart-big-num ' + numCls + '">' + numTxt + '</div>' +
-            '<div class="chart-big-sub">' + subTxt + ' <span class="state-badge ' + sb2.c + '">' + sb2.t + '</span></div></div>' +
+          '<div class="chart-big ' + numCls + '">' +
+            '<div class="chart-big-label">' + (mode === 'profit' ? '当前预估收益' : '当前预估收益率') + '</div>' +
+            '<div class="chart-big-num">' + numTxt + '</div>' +
+            '<div class="chart-big-row">' +
+              '<span class="cb-item"><b>' + subProfitTxt + '</b>收益</span>' +
+              '<span class="cb-item"><b>' + subRateTxt + '</b>收益率</span>' +
+              '<span class="state-badge ' + sb2.c + '">' + sb2.t + '</span>' +
+            '</div>' +
+          '</div>' +
           '<div class="chart-toggle">' +
             '<button class="tog ' + (mode === 'profit' ? 'on' : '') + '" data-m="modeProfit">收益</button>' +
             '<button class="tog ' + (mode === 'rate' ? 'on' : '') + '" data-m="modeRate">收益率</button>' +
@@ -1249,7 +1265,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=15').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=16').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
