@@ -427,8 +427,10 @@
   function loadIndices() {
     var codes = state.indices.map(function (i) { return i.code; }).join(',');
     fetch('https://qt.gtimg.cn/q=' + codes)
-      .then(function (r) { return r.text(); })
-      .then(function (text) {
+      .then(function (r) { return r.arrayBuffer(); })
+      .then(function (buf) {
+        var text;
+        try { text = new TextDecoder('gbk').decode(buf); } catch (e) { text = new TextDecoder('utf-8').decode(buf); }
         var re = /v_([a-z0-9]+)="([^"]*)"/g, m;
         while ((m = re.exec(text)) !== null) {
           var code = m[1], f = m[2].split('~');
@@ -1240,8 +1242,23 @@
       ccLine.style.left = pctLeft + '%';
       ccTip.style.left = pctLeft + '%';
       ccTip.style.top = pctTop + '%';
-      var up = r.v >= 0;
-      ccTip.className = 'cc-tip ' + (up ? 'up' : 'down');
+      ccTip.style.transform = 'translate(-50%, -120%)';
+      ccTip.className = 'cc-tip ' + (r.v >= 0 ? 'up' : 'down');
+      ccTip.innerHTML = '<div class="cc-time">' + r.time + '</div>' +
+        '<div class="cc-row"><span>收益</span><b>' + (r.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(r.profit), 2) + '</b></div>' +
+        '<div class="cc-row"><span>收益率</span><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b></div>';
+      // 边界约束：先让浏览器布局，再测量并 flip
+      requestAnimationFrame(function () {
+        var tipRect = ccTip.getBoundingClientRect();
+        var wrapRect = wrap.getBoundingClientRect();
+        var tipX = (xvb / meta.w) * wrapRect.width;
+        var tipY = (r.y / meta.h) * wrapRect.height;
+        var tx = '-50%'; var ty = '-120%';
+        if (tipX + tipRect.width / 2 > wrapRect.width - 6) tx = 'calc(-100% - 8px)';
+        else if (tipX - tipRect.width / 2 < 6) tx = '8px';
+        if (tipY - tipRect.height < 6) ty = '8px';
+        ccTip.style.transform = 'translate(' + tx + ', ' + ty + ')';
+      });
       ccTip.innerHTML = '<div class="cc-time">' + r.time + '</div>' +
         '<div class="cc-row"><span>收益</span><b>' + (r.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(r.profit), 2) + '</b></div>' +
         '<div class="cc-row"><span>收益率</span><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b></div>';
@@ -1711,7 +1728,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=19').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=20').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
     loadIndices();
