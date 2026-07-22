@@ -402,8 +402,11 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     view: 'home', filter: '全部', selectedCode: null,
     searchKw: '', searchResults: [], searchTargets: {}, searching: false,
     wide: false, lastUpd: 0, refreshing: false,
-    sort: 'hold_desc', compact: false
+    homeSort: 'hold_desc', portSort: 'hold_desc', compact: false
   };
+  // 取/设 当前页面使用的排序（首页、收益页各自独立，不联动）
+  function curSort() { return ui.view === 'portfolio' ? ui.portSort : ui.homeSort; }
+  function setCurSort(s) { if (ui.view === 'portfolio') ui.portSort = s; else ui.homeSort = s; }
 
   // ---------------- 存储 ----------------
   function load() {
@@ -413,7 +416,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         var s = JSON.parse(r);
         if (s && s.funds) {
           state.funds = s.funds || {}; state.groups = s.groups || []; state.defaultGroup = s.defaultGroup || '';
-          if (s.sort) ui.sort = s.sort;
+          if (s.homeSort) ui.homeSort = s.homeSort;
+          if (s.portSort) ui.portSort = s.portSort;
           if (s.compact != null) ui.compact = !!s.compact;
           // 兼容旧数据：补齐新字段
           Object.keys(state.funds).forEach(function (k) {
@@ -434,7 +438,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   }
   function save() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ funds: state.funds, groups: state.groups, defaultGroup: state.defaultGroup, version: 1, sort: ui.sort, compact: ui.compact }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ funds: state.funds, groups: state.groups, defaultGroup: state.defaultGroup, version: 1, homeSort: ui.homeSort, portSort: ui.portSort, compact: ui.compact }));
     } catch (e) { toast('当前环境无法本地保存（建议用本地服务器打开）'); }
   }
 
@@ -791,7 +795,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     return { hold: agg.totalProfit, today: agg.today || 0 };
   }
   function sortFunds(list) {
-    var s = ui.sort || 'hold_desc';
+    var s = curSort() || 'hold_desc';
     var axisToday = s.indexOf('today') >= 0;
     var asc = s.indexOf('_asc') >= 0;
     return list.slice().sort(function (a, b) {
@@ -805,7 +809,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     return {
       'hold_desc': '历史收益 ↓', 'hold_asc': '历史收益 ↑',
       'today_desc': '今日预估 ↓', 'today_asc': '今日预估 ↑'
-    }[ui.sort] || '历史收益 ↓';
+    }[curSort()] || '历史收益 ↓';
   }
   // 排序 + 简洁 工具栏
   function toolbarHTML() {
@@ -820,7 +824,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   // ---------------- 渲染：首页 ----------------
   function renderHome() {
     var open = marketOpen();
-    var axisToday = (ui.sort || 'hold_desc').indexOf('today') >= 0;
+    var axisToday = (ui.homeSort || 'hold_desc').indexOf('today') >= 0;
     var html = '';
     html += '<div class="market-row"><div class="market ' + (open ? 'open' : '') + '"><span class="dot"></span>' + (open ? '盘中交易中' : '非交易时段') + '</div><span class="upd">' + lastUpdText() + '</span></div>';
     // 分组标签栏：按当前排序口径显示历史收益或今日收益
@@ -1058,7 +1062,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var map = {};
     pos.forEach(function (p) { (map[p.code] = map[p.code] || { f: p.f, hs: [] }).hs.push(p.h); });
     var cards = Object.keys(map).map(function (c) { return map[c]; });
-    var axisToday = (ui.sort || 'hold_desc').indexOf('today') >= 0;
+    var axisToday = (ui.portSort || 'hold_desc').indexOf('today') >= 0;
     cards = sortFunds(cards);
     html += '<div class="section-h">逐只明细（' + cards.length + '）</div>';
     if (!cards.length) {
@@ -1287,8 +1291,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var html = '<div class="modal-mask"><div class="sheet">';
     html += '<div class="stitle">排序方式</div>';
     opts.forEach(function (o) {
-      var sel = ui.sort === o.s ? ' sel' : '';
-      var ck = (ui.sort === o.s) ? '<span class="check">✓</span>' : '<span class="check" style="opacity:0">✓</span>';
+      var sel = curSort() === o.s ? ' sel' : '';
+      var ck = (curSort() === o.s) ? '<span class="check">✓</span>' : '<span class="check" style="opacity:0">✓</span>';
       html += '<div class="opt' + sel + '" data-act="setSort" data-s="' + o.s + '"><span>' + o.t + '</span>' + ck + '</div>';
     });
     html += '<div class="divider"></div>';
@@ -1447,7 +1451,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         case 'renameGroup': renameGroup(g); break;
         case 'delGroup': delGroup(g); break;
         case 'openSort': openSortSheet(); break;
-        case 'setSort': ui.sort = el.dataset.s; save(); render(); openSortSheet(); break;
+        case 'setSort': setCurSort(el.dataset.s); save(); render(); openSortSheet(); break;
         case 'toggleCompact': ui.compact = !ui.compact; save(); render(); break;
         case 'toggleCompactSheet': ui.compact = !ui.compact; save(); render(); openSortSheet(); break;
         case 'closeSheet': if ($('#modalRoot')) $('#modalRoot').innerHTML = ''; break;
@@ -1498,7 +1502,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=12').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=13').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
