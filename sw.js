@@ -1,5 +1,5 @@
 /* 估值宝 Service Worker：同源静态资源“网络优先”（保证代码及时更新），离线回落缓存；跨域数据接口直接走网络。 */
-var CACHE = 'fundwatch_v12';
+var CACHE = 'fundwatch_v13';
 self.addEventListener('install', function () { self.skipWaiting(); });
 self.addEventListener('activate', function (e) {
   e.waitUntil(
