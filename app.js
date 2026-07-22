@@ -316,6 +316,15 @@
     var anyReal = Object.keys(state.funds).some(function (k) { return state.funds[k].lastDate === todayStr(); });
     return anyReal ? '今日真实净值' : '收盘估值(预估)';
   }
+  // 汇总卡片列表的“历史总收益/总成本”
+  function sumHistory(cards) {
+    var profit = 0, cost = 0, mv = 0, count = 0;
+    (cards || []).forEach(function (card) {
+      var agg = aggregate(card.f, card.hs);
+      profit += agg.totalProfit; mv += agg.totalMV; cost += agg.totalCost; count++;
+    });
+    return { profit: profit, mv: mv, cost: cost, count: count };
+  }
 
   // ---------------- 刷新 ----------------
   function refreshOne(code) {
@@ -432,49 +441,60 @@
   // ---------------- 渲染：首页 ----------------
   function renderHome() {
     var open = marketOpen();
+    var axisToday = (ui.sort || 'hold_desc').indexOf('today') >= 0;
     var html = '';
     html += '<div class="market-row"><div class="market ' + (open ? 'open' : '') + '"><span class="dot"></span>' + (open ? '盘中交易中' : '非交易时段') + '</div><span class="upd">' + lastUpdText() + '</span></div>';
-    // 分组标签栏（每个标签下显示本范围按估值的收益金额）
+    // 分组标签栏：按当前排序口径显示历史收益或今日收益
     html += '<div class="gtabs">';
-    var allToday = sumToday(allCards());
     var gtabSub = function (profit, count) {
       if (!count) return '';
       return '<span class="gtab-sub ' + (profit >= 0 ? 'up' : 'down') + '">' + (profit >= 0 ? '+' : '') + '¥' + fmt(Math.abs(profit), 0) + '</span>';
     };
-    html += '<button class="gtab ' + (ui.filter === '全部' ? 'on' : '') + '" data-act="filter" data-g="全部">全部' + gtabSub(allToday.profit, allToday.count) + '</button>';
+    var allSummary = axisToday ? sumToday(allCards()) : sumHistory(allCards());
+    html += '<button class="gtab ' + (ui.filter === '全部' ? 'on' : '') + '" data-act="filter" data-g="全部">全部' + gtabSub(allSummary.profit, allSummary.count) + '</button>';
     state.groups.forEach(function (g) {
-      var gs = sumToday(cardsOfGroup(g));
+      var gs = axisToday ? sumToday(cardsOfGroup(g)) : sumHistory(cardsOfGroup(g));
       html += '<button class="gtab ' + (ui.filter === g ? 'on' : '') + '" data-act="filter" data-g="' + esc(g) + '">' + esc(g) + gtabSub(gs.profit, gs.count) + '</button>';
     });
     html += '<button class="gtab add" data-act="newGroup">＋分组</button>';
     html += '</div>';
-    html += '<div class="info-note">首页主数字：交易时段=<b>盘中实时估值</b> · 收盘后至净值更新前=<b>15:00 收盘预估</b> · <b>净值更新后显示真实收益</b>（徽标区分 实时/盘中/收盘预估/真实净值）</div>';
 
-    // 当前范围「截止当前口径的今日收益」（真实净值 or 收盘估值）
+    // 当前范围汇总：今日排序 → 今日收益；历史排序 → 历史累计收益
     var sc = visibleFunds();
-    var sum = sumToday(sc);
-    var scopeLabel = ui.filter === '全部' ? '全部今日收益' : ('「' + ui.filter + '」今日收益');
-    var vlabel = currentValLabel();
-    var sbMap = { '盘中实时': { t: '实时', c: 'live' }, '今日真实净值': { t: '真实净值', c: 'real' }, '收盘估值(预估)': { t: '收盘预估', c: 'est' } };
-    var sb2 = sbMap[vlabel];
-    var scopeBadge = sb2 ? '<span class="state-badge ' + sb2.c + '">' + sb2.t + '</span>' : '';
-    html += '<div class="section-h">' + esc(scopeLabel) + '（' + vlabel + '）</div>';
-    if (sum.count > 0) {
-      var pc = colorClass(sum.profit), ppct = sum.prevMv > 0 ? sum.profit / sum.prevMv * 100 : 0;
-      html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="pf-right"><span class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</span>' + scopeBadge + '</div></div></div>';
+    var sum, scopeLabel, scopeBadge = '', pctText = '', pc, ppct;
+    if (axisToday) {
+      sum = sumToday(sc);
+      var vlabel = currentValLabel();
+      var sbMap = { '盘中实时': { t: '实时', c: 'live' }, '今日真实净值': { t: '真实净值', c: 'real' }, '收盘估值(预估)': { t: '收盘预估', c: 'est' } };
+      var sb2 = sbMap[vlabel];
+      scopeLabel = (ui.filter === '全部' ? '全部今日收益' : ('「' + ui.filter + '」今日收益')) + '（' + vlabel + '）';
+      scopeBadge = sb2 ? '<span class="state-badge ' + sb2.c + '">' + sb2.t + '</span>' : '';
+      pc = colorClass(sum.profit); ppct = sum.prevMv > 0 ? sum.profit / sum.prevMv * 100 : 0;
+      pctText = '<span class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</span>';
     } else {
-      html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示按' + vlabel + '计算的今日收益</div>';
+      sum = sumHistory(sc);
+      scopeLabel = ui.filter === '全部' ? '全部历史收益' : ('「' + ui.filter + '」历史收益');
+      pc = colorClass(sum.profit); ppct = sum.cost > 0 ? sum.profit / sum.cost * 100 : 0;
+      pctText = '<span class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</span>';
+      scopeBadge = '<span class="state-badge">历史</span>';
+    }
+    html += '<div class="section-h">' + esc(scopeLabel) + '</div>';
+    if (sum.count > 0) {
+      html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="pf-right">' + pctText + scopeBadge + '</div></div></div>';
+    } else {
+      html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示' + (axisToday ? '今日收益' : '历史收益') + '</div>';
     }
 
     html += toolbarHTML();
     var list = sortFunds(visibleFunds());
+    var cardMode = axisToday ? 'today' : 'history';
     if (ui.wide) {
       html += '<div class="home-grid">';
-      html += '<div class="pane-list">' + (list.length ? list.map(function (card) { return cardHTML(card.f, card.hs); }).join('') : emptyMini()) + '</div>';
+      html += '<div class="pane-list">' + (list.length ? list.map(function (card) { return cardHTML(card.f, card.hs, cardMode); }).join('') : emptyMini()) + '</div>';
       html += '<div class="pane-detail">' + detailInner(ui.selectedCode && state.funds[ui.selectedCode] ? ui.selectedCode : null) + '</div>';
       html += '</div>';
     } else {
-      html += list.length ? list.map(function (card) { return cardHTML(card.f, card.hs); }).join('') : '<div class="empty"><div class="big">📭</div>还没有基金<br>点右下角 “＋” 添加，或去“收益”页</div>';
+      html += list.length ? list.map(function (card) { return cardHTML(card.f, card.hs, cardMode); }).join('') : '<div class="empty"><div class="big">📭</div>还没有基金<br>点右下角 “＋” 添加，或去“收益”页</div>';
     }
     view.innerHTML = html;
   }
@@ -490,34 +510,46 @@
     return null;
   }
 
-  function cardHTML(f, hs) {
+  function cardHTML(f, hs, mode) {
     var d = displayOf(f), c = colorClass(d.chg);
     var agg = aggregate(f, hs || []);
     // 分组标签：多分组显示“N个分组”，单分组显示组名
     var grp = '';
     if ((hs || []).length > 1) grp = '<span class="grp-tag">' + (hs.length) + '个分组</span>';
     else if ((hs || []).length === 1 && (hs[0].group || '')) grp = '<span class="grp-tag">' + esc(hs[0].group) + '</span>';
-    var sb = stateBadge(d);
-    var badge = sb ? '<span class="state-badge ' + sb.c + '">' + sb.t + '</span>' : '';
-    // 主数字：今日口径 → 今日收益；有持仓 → 累计收益；否则 → 涨跌幅%
-    var mainVal, mainCls, mainLabel;
-    if (agg.today != null) {
-      mainVal = (agg.today >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(agg.today), 0);
-      mainCls = agg.today >= 0 ? 'up' : 'down';
-      mainLabel = d.real ? '今日收益（真实）' : (d.latestNav ? '最新净值收益' : (d.live ? '今日预估（盘中）' : '今日预估（收盘）'));
-    } else if (agg.totalProfit !== 0 || agg.totalShares > 0) {
+    var isHistory = mode === 'history';
+    var mainVal, mainCls, pctText, badge = '', mainLabel;
+    if (isHistory || (agg.today == null && (agg.totalProfit !== 0 || agg.totalShares > 0))) {
+      // 历史口径：累计收益 + 累计收益率
       mainVal = (agg.totalProfit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(agg.totalProfit), 0);
       mainCls = agg.totalProfit >= 0 ? 'up' : 'down';
-      mainLabel = '累计收益';
+      pctText = (agg.totalProfit >= 0 ? '+' : '') + fmt(agg.totalProfitPct, 2) + '%';
+      badge = '<span class="state-badge">历史</span>';
+      mainLabel = '历史收益';
+    } else if (agg.today != null) {
+      // 今日口径：按 displayOf 区分真实/收盘预估/盘中/最新净值
+      mainVal = (agg.today >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(agg.today), 0);
+      mainCls = agg.today >= 0 ? 'up' : 'down';
+      pctText = (agg.today >= 0 ? '+' : '') + fmt(agg.todayPct, 2) + '%';
+      var sb = stateBadge(d);
+      badge = sb ? '<span class="state-badge ' + sb.c + '">' + sb.t + '</span>' : '';
+      if (d.real) mainLabel = '今日收益（真实）';
+      else if (d.latestNav) mainLabel = '今日收益（最新净值）';
+      else if (d.live) mainLabel = '今日预估（盘中）';
+      else if (d.estimate) mainLabel = '今日预估（收盘）';
+      else mainLabel = '今日收益';
     } else {
+      // 无持仓/无今日数据，退回到涨跌幅
       mainVal = sign(d.chg) + fmt(d.chg, 2) + '%';
       mainCls = c;
+      pctText = '';
       mainLabel = d.label;
     }
+    var pctHtml = pctText ? ('<div class="chg-pill ' + mainCls + '">' + pctText + '</div>') : '';
     return '<div class="fcard" data-act="open" data-code="' + f.code + '">' +
       '<button class="del" data-act="del" data-code="' + f.code + '" title="删除">✕</button>' +
       '<div class="top"><div><div class="nm">' + esc(f.name || f.code) + '</div><div class="cd">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + '</div></div>' +
-      '<div class="val"><div class="v ' + mainCls + '">' + mainVal + '</div><div class="chg-pill ' + c + '">' + arrow(d.chg) + ' ' + sign(d.chg) + fmt(d.chg, 2) + '%</div>' + badge + '</div></div>' +
+      '<div class="val"><div class="v ' + mainCls + '">' + mainVal + '</div>' + pctHtml + badge + '</div></div>' +
       '<div class="bot"><span>' + esc(mainLabel) + '</span></div>' + grp +
       '</div>';
   }
@@ -1087,7 +1119,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=11').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=12').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
