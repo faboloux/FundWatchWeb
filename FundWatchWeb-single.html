@@ -167,6 +167,29 @@ body{
 .chg-pill.down{color:var(--down);background:var(--tint-down)}
 .chg-pill.flat{color:var(--flat);background:var(--chip)}
 
+/* 首页汇总卡片：可点击，带提示 */
+.pf-click{position:relative}
+.pf-click .pf-hint{font-size:11px;color:var(--sub);margin-top:6px;font-weight:600;letter-spacing:.2px}
+.pf-click:active{transform:scale(.985)}
+
+/* 全屏走势图页面 */
+.page-modal{align-items:flex-start;overflow:auto;background:var(--bg)}
+.chart-page{min-height:100vh;width:100%;max-width:1100px;margin:0 auto;background:var(--bg);display:flex;flex-direction:column}
+.chart-head{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;padding:calc(10px + var(--safe-t)) 12px 10px;background:rgba(244,245,249,.92);backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line)}
+.chart-title{font-size:17px;font-weight:800;flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 10px}
+.chart-body{flex:1;padding:14px 16px calc(20px + var(--safe-b))}
+.chart-big{background:var(--card);border-radius:var(--radius);padding:18px 16px;margin-bottom:12px;box-shadow:var(--shadow);border:1px solid rgba(236,238,243,.7)}
+.chart-big-label{font-size:12px;color:var(--sub);font-weight:700;margin-bottom:6px}
+.chart-big-num{font-size:34px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1;margin-bottom:8px}
+.chart-big-sub{font-size:13px;color:var(--sub);font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.chart-toggle{display:flex;gap:8px;margin-bottom:12px}
+.chart-toggle .tog{flex:1;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:10px;font-size:14px;font-weight:700;color:var(--sub);cursor:pointer}
+.chart-toggle .tog.on{background:var(--txt);color:#fff;border-color:var(--txt)}
+.chart-wrap{background:var(--card);border-radius:var(--radius);padding:12px 10px 8px;box-shadow:var(--shadow);border:1px solid rgba(236,238,243,.7);height:220px}
+.trend-chart{width:100%;height:100%;display:block}
+.trend-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--sub);font-size:13px;font-weight:500}
+.chart-note{font-size:11.5px;color:var(--sub);margin-top:12px;text-align:center;font-weight:500}
+
 /* ============ 底部导航 ============ */
 .bottombar{
   position:fixed;left:50%;transform:translateX(-50%);bottom:0;z-index:20;
@@ -717,6 +740,44 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     return { profit: profit, mv: mv, cost: cost, count: count };
   }
 
+  // 按当前筛选范围，聚合各基金今日 estimateCurve，生成逐分钟「预估收益/收益率」走势
+  // 返回 [{time, profit, pct, mv, prevMv}]，按时间升序
+  function calcTodayTrend(cards) {
+    if (!cards || !cards.length) return [];
+    var series = [];
+    cards.forEach(function (card) {
+      var f = card.f, hs = card.hs, curve = (f.estimateCurve || []).filter(function (p) { return p && p.time; });
+      if (!curve.length) return;
+      var shares = 0;
+      (hs || []).forEach(function (h) { if (h && h.shares > 0) shares += h.shares; });
+      if (shares <= 0) return;
+      var pts = curve.map(function (p) {
+        var nav = Number.isFinite(p.nav) ? p.nav : 0;
+        var mv = nav * shares;
+        var chg = Number.isFinite(p.chg) ? p.chg : 0;
+        var prevMv = chg === -100 ? mv : mv / (1 + chg / 100);
+        return { time: p.time, mv: mv, prevMv: prevMv, profit: mv - prevMv, pct: prevMv > 0 ? (mv - prevMv) / prevMv * 100 : 0 };
+      });
+      series.push(pts);
+    });
+    if (!series.length) return [];
+    var timeSet = {};
+    series.forEach(function (pts) { pts.forEach(function (p) { timeSet[p.time] = true; }); });
+    var times = Object.keys(timeSet).sort(function (a, b) { return timeToMin(a) - timeToMin(b); });
+    return times.map(function (t) {
+      var tm = timeToMin(t), totalMV = 0, totalPrev = 0;
+      series.forEach(function (pts) {
+        var last = null;
+        for (var i = 0; i < pts.length; i++) {
+          if (timeToMin(pts[i].time) <= tm) last = pts[i]; else break;
+        }
+        if (last) { totalMV += last.mv; totalPrev += last.prevMv; }
+      });
+      var profit = totalMV - totalPrev;
+      return { time: t, profit: profit, pct: totalPrev > 0 ? profit / totalPrev * 100 : 0, mv: totalMV, prevMv: totalPrev };
+    });
+  }
+
   // ---------------- 刷新 ----------------
   function refreshOne(code) {
     var f = state.funds[code]; if (!f) return Promise.resolve();
@@ -874,7 +935,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     }
     html += '<div class="section-h">' + esc(scopeLabel) + '</div>';
     if (sum.count > 0) {
-      html += '<div class="fcard pf"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="pf-right">' + pctText + scopeBadge + '</div></div></div>';
+      html += '<div class="fcard pf pf-click" data-act="openTodayChart"><div class="pf-row"><div class="pf-num ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + '¥' + fmt(sum.profit, 2) + '</div><div class="pf-right">' + pctText + scopeBadge + '</div></div><div class="pf-hint">点击查看今日走势 ▸</div></div>';
     } else {
       html += '<div class="sum-empty">该范围暂无持仓 · 在基金详情里填份额和成本价后，这里显示' + (axisToday ? '今日收益' : '历史收益') + '</div>';
     }
@@ -1291,6 +1352,77 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     root.querySelector('[data-m="ok"]').onclick = function () { root.innerHTML = ''; };
     root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
   }
+
+  // 绘制今日收益/收益率走势图（支持收益/收益率切换）
+  function renderTrendChart(data, mode, w, h) {
+    mode = mode || 'profit';
+    if (!data || data.length < 2) return '<div class="trend-empty">暂无足够今日估值曲线数据</div>';
+    var vals = data.map(function (p) { return mode === 'profit' ? p.profit : p.pct; });
+    var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+    var rng = (max - min) || 1;
+    var zeroY = h - ((0 - min) / rng) * (h - 16) - 8;
+    var pts = data.map(function (p) {
+      var v = mode === 'profit' ? p.profit : p.pct;
+      var x = timeToX(timeToMin(p.time), w);
+      var y = h - ((v - min) / rng) * (h - 16) - 8;
+      return { x: x, y: y, t: p.time };
+    });
+    var line = pts.map(function (p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+    var area = pts[0].x.toFixed(1) + ',' + zeroY.toFixed(1) + ' ' + line + ' ' + pts[pts.length - 1].x.toFixed(1) + ',' + zeroY.toFixed(1);
+    var color = (mode === 'profit' ? (data[data.length - 1].profit >= 0 ? 'var(--up)' : 'var(--down)') : (data[data.length - 1].pct >= 0 ? 'var(--up)' : 'var(--down)'));
+    var labels = ['9:30', '11:30', '13:00', '15:00'].map(function (t) {
+      var x = timeToX(timeToMin(t), w);
+      return '<text x="' + x + '" y="' + (h - 2) + '" text-anchor="middle" font-size="10" fill="var(--sub)">' + t + '</text>';
+    }).join('');
+    return '<svg class="trend-chart" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
+      '<line x1="0" y1="' + zeroY.toFixed(1) + '" x2="' + w + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--line)" stroke-width="1"/>' +
+      '<polygon points="' + area + '" fill="' + color + '22" stroke="none"></polygon>' +
+      '<polyline points="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>' +
+      labels + '</svg>';
+  }
+
+  function openTodayChart() {
+    var scope = ui.filter || '全部';
+    var cards = scope === '全部' ? allCards() : cardsOfGroup(scope);
+    var data = calcTodayTrend(cards);
+    var root = $('#modalRoot');
+    var mode = ui.trendMode || 'profit'; // 'profit' | 'rate'
+    var last = data && data.length ? data[data.length - 1] : null;
+    var vlabel = currentValLabel();
+    var sbMap = { '盘中实时': { t: '实时', c: 'live' }, '今日真实净值': { t: '真实净值', c: 'real' }, '收盘估值(预估)': { t: '收盘预估', c: 'est' } };
+    var sb2 = sbMap[vlabel] || { t: '预估', c: 'est' };
+    var title = (scope === '全部' ? '全部' : '「' + esc(scope) + '」') + '今日' + (mode === 'profit' ? '收益' : '收益率') + '走势';
+    var numVal = last ? (mode === 'profit' ? last.profit : last.pct) : 0;
+    var numCls = numVal >= 0 ? 'up' : 'down';
+    var numTxt = (mode === 'profit'
+      ? (numVal >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(numVal), 2)
+      : (numVal >= 0 ? '+' : '') + fmt(numVal, 2) + '%');
+    var subTxt = last
+      ? (mode === 'profit' ? '收益率 ' + (last.pct >= 0 ? '+' : '') + fmt(last.pct, 2) + '%' : '收益 ' + (last.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(last.profit), 2)) + ' · ' + last.time
+      : '暂无数据';
+    var svg = renderTrendChart(data, mode, 360, 180);
+    root.innerHTML = '<div class="modal-mask page-modal">' +
+      '<div class="chart-page">' +
+        '<div class="chart-head"><button class="icon-btn" data-m="close">←</button><div class="chart-title">' + title + '</div><div style="width:38px"></div></div>' +
+        '<div class="chart-body">' +
+          '<div class="chart-big"><div class="chart-big-label">当前' + (mode === 'profit' ? '预估收益' : '预估收益率') + '（' + sb2.t + '）</div>' +
+            '<div class="chart-big-num ' + numCls + '">' + numTxt + '</div>' +
+            '<div class="chart-big-sub">' + subTxt + ' <span class="state-badge ' + sb2.c + '">' + sb2.t + '</span></div></div>' +
+          '<div class="chart-toggle">' +
+            '<button class="tog ' + (mode === 'profit' ? 'on' : '') + '" data-m="modeProfit">收益</button>' +
+            '<button class="tog ' + (mode === 'rate' ? 'on' : '') + '" data-m="modeRate">收益率</button>' +
+          '</div>' +
+          '<div class="chart-wrap">' + svg + '</div>' +
+          '<div class="chart-note">按当前筛选范围汇总 · 数据来源：新浪盘中估值曲线</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+    root.querySelector('[data-m="close"]').onclick = function () { root.innerHTML = ''; };
+    root.querySelector('[data-m="modeProfit"]').onclick = function () { ui.trendMode = 'profit'; openTodayChart(); };
+    root.querySelector('[data-m="modeRate"]').onclick = function () { ui.trendMode = 'rate'; openTodayChart(); };
+    root.querySelector('.modal-mask').onclick = function (ev) { if (ev.target.classList.contains('modal-mask')) root.innerHTML = ''; };
+  }
+
   function openSortSheet() {
     var root = $('#modalRoot');
     var opts = ui.view === 'portfolio' ? [
@@ -1471,6 +1603,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         case 'toggleCompact': ui.compact = !ui.compact; save(); render(); break;
         case 'toggleCompactSheet': ui.compact = !ui.compact; save(); render(); openSortSheet(); break;
         case 'closeSheet': if ($('#modalRoot')) $('#modalRoot').innerHTML = ''; break;
+        case 'openTodayChart': openTodayChart(); break;
         case 'exportExcel': exportExcel(); break;
         case 'exportTemplate': exportTemplate(); break;
         case 'pickExcel': var fi = document.getElementById('fileExcel'); if (fi) fi.click(); break;
@@ -1518,7 +1651,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=14').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=15').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
   }
