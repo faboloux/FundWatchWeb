@@ -1460,12 +1460,23 @@
       ccLine.style.left = pctLeft + '%';
       ccTip.style.left = pctLeft + '%';
       ccTip.style.top = pctTop + '%';
-      var up = r.chg >= 0;
-      ccTip.className = 'cc-tip ' + (up ? 'up' : 'down');
+      ccTip.style.transform = 'translate(-50%, -120%)';
+      ccTip.className = 'cc-tip ' + (r.chg >= 0 ? 'up' : 'down');
       ccTip.innerHTML = '<div class="cc-time">' + r.time + '</div>' +
         '<div class="cc-row"><span>点位</span><b>' + fmt(r.price, 2) + '</b></div>' +
         '<div class="cc-row"><span>涨跌</span><b>' + (r.chg >= 0 ? '+' : '−') + fmt(Math.abs(r.chg), 2) + '</b></div>';
-      bigEl.className = 'chart-big ' + (up ? 'up' : 'down');
+      requestAnimationFrame(function () {
+        var tipRect = ccTip.getBoundingClientRect();
+        var wrapRect = wrap.getBoundingClientRect();
+        var tipX = (xvb / meta.w) * wrapRect.width;
+        var tipY = (r.y / meta.h) * wrapRect.height;
+        var tx = '-50%'; var ty = '-120%';
+        if (tipX + tipRect.width / 2 > wrapRect.width - 6) tx = 'calc(-100% - 8px)';
+        else if (tipX - tipRect.width / 2 < 6) tx = '8px';
+        if (tipY - tipRect.height < 6) ty = '8px';
+        ccTip.style.transform = 'translate(' + tx + ', ' + ty + ')';
+      });
+      bigEl.className = 'chart-big ' + (r.chg >= 0 ? 'up' : 'down');
       bigNum.textContent = fmt(r.price, 2);
       bigRow.innerHTML = '<span class="cb-item"><b>' + (r.chg >= 0 ? '+' : '−') + fmt(Math.abs(r.chg), 2) + '</b>涨跌额</span>' +
         '<span class="cb-item"><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b>涨跌幅</span>';
@@ -1728,7 +1739,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=20').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=21').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
     loadIndices();
