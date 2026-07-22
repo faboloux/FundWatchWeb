@@ -203,7 +203,7 @@ body{
 .chart-page{min-height:100vh;width:100%;max-width:1100px;margin:0 auto;background:var(--bg);display:flex;flex-direction:column}
 .chart-head{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;padding:calc(12px + var(--safe-t)) 14px 12px;background:rgba(255,255,255,.92);backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--line)}
 .chart-title{font-size:17px;font-weight:800;flex:1;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 12px;color:var(--txt)}
-.chart-body{flex:1;padding:14px 14px calc(24px + var(--safe-b))}
+.chart-body{flex:1;padding:14px 14px calc(24px + var(--safe-b));padding-top:calc(70px + var(--safe-t))}
 .chart-big{background:var(--card);border-radius:var(--radius);padding:20px 18px;margin-bottom:14px;box-shadow:var(--shadow-card);border:1px solid rgba(236,238,243,.7);position:relative;overflow:hidden}
 .chart-big::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--up),var(--brand-2));opacity:0}
 .chart-big.up::before{background:linear-gradient(90deg,var(--up),var(--brand-2));opacity:1}
@@ -1904,12 +1904,23 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       ccLine.style.left = pctLeft + '%';
       ccTip.style.left = pctLeft + '%';
       ccTip.style.top = pctTop + '%';
-      var up = r.chg >= 0;
-      ccTip.className = 'cc-tip ' + (up ? 'up' : 'down');
+      ccTip.style.transform = 'translate(-50%, -120%)';
+      ccTip.className = 'cc-tip ' + (r.chg >= 0 ? 'up' : 'down');
       ccTip.innerHTML = '<div class="cc-time">' + r.time + '</div>' +
         '<div class="cc-row"><span>点位</span><b>' + fmt(r.price, 2) + '</b></div>' +
         '<div class="cc-row"><span>涨跌</span><b>' + (r.chg >= 0 ? '+' : '−') + fmt(Math.abs(r.chg), 2) + '</b></div>';
-      bigEl.className = 'chart-big ' + (up ? 'up' : 'down');
+      requestAnimationFrame(function () {
+        var tipRect = ccTip.getBoundingClientRect();
+        var wrapRect = wrap.getBoundingClientRect();
+        var tipX = (xvb / meta.w) * wrapRect.width;
+        var tipY = (r.y / meta.h) * wrapRect.height;
+        var tx = '-50%'; var ty = '-120%';
+        if (tipX + tipRect.width / 2 > wrapRect.width - 6) tx = 'calc(-100% - 8px)';
+        else if (tipX - tipRect.width / 2 < 6) tx = '8px';
+        if (tipY - tipRect.height < 6) ty = '8px';
+        ccTip.style.transform = 'translate(' + tx + ', ' + ty + ')';
+      });
+      bigEl.className = 'chart-big ' + (r.chg >= 0 ? 'up' : 'down');
       bigNum.textContent = fmt(r.price, 2);
       bigRow.innerHTML = '<span class="cb-item"><b>' + (r.chg >= 0 ? '+' : '−') + fmt(Math.abs(r.chg), 2) + '</b>涨跌额</span>' +
         '<span class="cb-item"><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b>涨跌幅</span>';
@@ -2172,7 +2183,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=20').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=21').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
     loadIndices();
