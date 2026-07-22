@@ -224,7 +224,7 @@ body{
 /* 走势图拖动 crosshair + 数值气泡 */
 .cc{position:absolute;inset:0;pointer-events:none;display:none;z-index:5}
 .cc-line{position:absolute;top:6px;bottom:22px;width:1px;left:0;background:var(--sub);opacity:.45;transform:translateX(-0.5px)}
-.cc-tip{position:absolute;left:0;top:0;transform:translate(-50%,-50%);background:rgba(26,29,36,.94);color:#fff;border-radius:11px;padding:7px 10px;min-width:104px;box-shadow:var(--shadow-2);font-size:11px;font-variant-numeric:tabular-nums}
+.cc-tip{position:absolute;left:0;top:0;transform:translate(-50%,-120%);background:rgba(26,29,36,.94);color:#fff;border-radius:11px;padding:7px 10px;min-width:104px;box-shadow:var(--shadow-2);font-size:11px;font-variant-numeric:tabular-nums;pointer-events:none;white-space:nowrap}
 .cc-tip .cc-time{font-size:10px;opacity:.7;font-weight:600;margin-bottom:4px;letter-spacing:.3px}
 .cc-tip .cc-row{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:2px;font-weight:500;opacity:.9}
 .cc-tip .cc-row b{font-weight:800;font-size:12px}
@@ -871,8 +871,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   function loadIndices() {
     var codes = state.indices.map(function (i) { return i.code; }).join(',');
     fetch('https://qt.gtimg.cn/q=' + codes)
-      .then(function (r) { return r.text(); })
-      .then(function (text) {
+      .then(function (r) { return r.arrayBuffer(); })
+      .then(function (buf) {
+        var text;
+        try { text = new TextDecoder('gbk').decode(buf); } catch (e) { text = new TextDecoder('utf-8').decode(buf); }
         var re = /v_([a-z0-9]+)="([^"]*)"/g, m;
         while ((m = re.exec(text)) !== null) {
           var code = m[1], f = m[2].split('~');
@@ -1684,8 +1686,23 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       ccLine.style.left = pctLeft + '%';
       ccTip.style.left = pctLeft + '%';
       ccTip.style.top = pctTop + '%';
-      var up = r.v >= 0;
-      ccTip.className = 'cc-tip ' + (up ? 'up' : 'down');
+      ccTip.style.transform = 'translate(-50%, -120%)';
+      ccTip.className = 'cc-tip ' + (r.v >= 0 ? 'up' : 'down');
+      ccTip.innerHTML = '<div class="cc-time">' + r.time + '</div>' +
+        '<div class="cc-row"><span>收益</span><b>' + (r.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(r.profit), 2) + '</b></div>' +
+        '<div class="cc-row"><span>收益率</span><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b></div>';
+      // 边界约束：先让浏览器布局，再测量并 flip
+      requestAnimationFrame(function () {
+        var tipRect = ccTip.getBoundingClientRect();
+        var wrapRect = wrap.getBoundingClientRect();
+        var tipX = (xvb / meta.w) * wrapRect.width;
+        var tipY = (r.y / meta.h) * wrapRect.height;
+        var tx = '-50%'; var ty = '-120%';
+        if (tipX + tipRect.width / 2 > wrapRect.width - 6) tx = 'calc(-100% - 8px)';
+        else if (tipX - tipRect.width / 2 < 6) tx = '8px';
+        if (tipY - tipRect.height < 6) ty = '8px';
+        ccTip.style.transform = 'translate(' + tx + ', ' + ty + ')';
+      });
       ccTip.innerHTML = '<div class="cc-time">' + r.time + '</div>' +
         '<div class="cc-row"><span>收益</span><b>' + (r.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(r.profit), 2) + '</b></div>' +
         '<div class="cc-row"><span>收益率</span><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b></div>';
@@ -2155,7 +2172,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=19').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=20').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
     loadIndices();
