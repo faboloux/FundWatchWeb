@@ -1095,6 +1095,25 @@
     // 零线上方（收益>0）用红色，下方（收益<0）用绿色；按零线拆分线段与填充区
     function signOf(y) { return y < zeroY ? 1 : (y > zeroY ? -1 : 0); }
     function colorOf(s) { return s > 0 ? 'var(--up)' : 'var(--down)'; }
+    // 找出截止当前时间点的最高、最低点
+    var maxIdx = 0, minIdx = 0;
+    for (var pi = 1; pi < vals.length; pi++) {
+      if (vals[pi] > vals[maxIdx]) maxIdx = pi;
+      if (vals[pi] < vals[minIdx]) minIdx = pi;
+    }
+    function fmtPointVal(v) {
+      if (mode === 'profit') return (v >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(v), 2);
+      return (v >= 0 ? '+' : '') + fmt(v, 2) + '%';
+    }
+    function anchorAt(x) { return x < 28 ? 'start' : (x > w - 28 ? 'end' : 'middle'); }
+    function makePointLabel(pt, val, isTop) {
+      var c = colorOf(signOf(pt.y));
+      var anc = anchorAt(pt.x);
+      var dy = isTop ? -8 : 16;
+      return '<circle cx="' + pt.x.toFixed(1) + '" cy="' + pt.y.toFixed(1) + '" r="3.5" fill="' + c + '" stroke="#fff" stroke-width="1.5"/>' +
+        '<text x="' + pt.x.toFixed(1) + '" y="' + (pt.y + dy).toFixed(1) + '" text-anchor="' + anc + '" font-size="10" font-weight="700" fill="' + c + '">' + fmtPointVal(val) + '</text>';
+    }
+    var pointLabels = makePointLabel(pts[maxIdx], vals[maxIdx], true) + makePointLabel(pts[minIdx], vals[minIdx], false);
     var segments = [];
     var cur = [pts[0]];
     var curSign = signOf(pts[0].y);
@@ -1120,12 +1139,17 @@
       var gy = padT + (plotH * gi) / 2;
       gridLines += '<line x1="0" y1="' + gy.toFixed(1) + '" x2="' + w + '" y2="' + gy.toFixed(1) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>';
     }
-    // 时间标签
-    var times = [{ t: '9:30', a: 'start' }, { t: '11:30', a: 'middle' }, { t: '13:00', a: 'middle' }, { t: '15:00', a: 'end' }];
+    // 时间标签：仅保留两端 9:30 / 15:00，中间 11:30 / 13:00 改为竖向刻度线
+    var times = [{ t: '9:30', a: 'start' }, { t: '15:00', a: 'end' }];
     var labels = times.map(function (o) {
       var x = timeToX(timeToMin(o.t), w);
       return '<text x="' + x + '" y="' + (h - 4) + '" text-anchor="' + o.a + '" font-size="10" fill="var(--sub)" font-weight="600">' + o.t + '</text>';
     }).join('');
+    var tickLines = '';
+    ['11:30', '13:00'].forEach(function (t) {
+      var x = timeToX(timeToMin(t), w);
+      tickLines += '<line x1="' + x.toFixed(1) + '" y1="' + padT + '" x2="' + x.toFixed(1) + '" y2="' + (h - padB) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="2,2" opacity="0.7"/>';
+    });
     // 分段填充与折线
     var fills = '', lines = '';
     segments.forEach(function (seg) {
@@ -1138,9 +1162,9 @@
     });
     return {
       svg: '<svg class="trend-chart" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
-        gridLines +
+        gridLines + tickLines +
         '<line x1="0" y1="' + zeroY.toFixed(1) + '" x2="' + w + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--sub)" stroke-width="1" opacity="0.25"/>' +
-        fills + lines + labels + '</svg>',
+        fills + lines + pointLabels + labels + '</svg>',
       meta: { min: min, rng: rng, padT: padT, plotH: plotH, w: w, h: h, zeroY: zeroY }
     };
   }
@@ -1320,6 +1344,21 @@
     });
     function signOf(y) { return y < zeroY ? 1 : (y > zeroY ? -1 : 0); }
     function colorOf(s) { return s > 0 ? 'var(--up)' : 'var(--down)'; }
+    // 找出截止当前时间点的最高、最低点位
+    var maxIdx = 0, minIdx = 0;
+    for (var pi = 1; pi < vals.length; pi++) {
+      if (vals[pi] > vals[maxIdx]) maxIdx = pi;
+      if (vals[pi] < vals[minIdx]) minIdx = pi;
+    }
+    function anchorAt(x) { return x < 28 ? 'start' : (x > w - 28 ? 'end' : 'middle'); }
+    function makePointLabel(pt, val, isTop) {
+      var c = colorOf(signOf(pt.y));
+      var anc = anchorAt(pt.x);
+      var dy = isTop ? -8 : 16;
+      return '<circle cx="' + pt.x.toFixed(1) + '" cy="' + pt.y.toFixed(1) + '" r="3.5" fill="' + c + '" stroke="#fff" stroke-width="1.5"/>' +
+        '<text x="' + pt.x.toFixed(1) + '" y="' + (pt.y + dy).toFixed(1) + '" text-anchor="' + anc + '" font-size="10" font-weight="700" fill="' + c + '">' + fmt(val, 2) + '</text>';
+    }
+    var pointLabels = makePointLabel(pts[maxIdx], vals[maxIdx], true) + makePointLabel(pts[minIdx], vals[minIdx], false);
     var segments = [], cur = [pts[0]], curSign = signOf(pts[0].y);
     for (var i = 1; i < pts.length; i++) {
       var p = pts[i], s = signOf(p.y);
@@ -1340,11 +1379,16 @@
       var gy = padT + (plotH * gi) / 2;
       gridLines += '<line x1="0" y1="' + gy.toFixed(1) + '" x2="' + w + '" y2="' + gy.toFixed(1) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="3,3" opacity="0.6"/>';
     }
-    var times = [{ t: '9:30', a: 'start' }, { t: '11:30', a: 'middle' }, { t: '13:00', a: 'middle' }, { t: '15:00', a: 'end' }];
+    var times = [{ t: '9:30', a: 'start' }, { t: '15:00', a: 'end' }];
     var labels = times.map(function (o) {
       var x = timeToX(timeToMin(o.t), w);
       return '<text x="' + x + '" y="' + (h - 4) + '" text-anchor="' + o.a + '" font-size="10" fill="var(--sub)" font-weight="600">' + o.t + '</text>';
     }).join('');
+    var tickLines = '';
+    ['11:30', '13:00'].forEach(function (t) {
+      var x = timeToX(timeToMin(t), w);
+      tickLines += '<line x1="' + x.toFixed(1) + '" y1="' + padT + '" x2="' + x.toFixed(1) + '" y2="' + (h - padB) + '" stroke="var(--line)" stroke-width="1" stroke-dasharray="2,2" opacity="0.7"/>';
+    });
     var fills = '', lines = '';
     segments.forEach(function (seg) {
       var color = colorOf(seg.sign);
@@ -1355,9 +1399,9 @@
       lines += '<polyline points="' + line + '" fill="none" stroke="' + color + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"></polyline>';
     });
     var svg = '<svg class="trend-chart" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none">' +
-      gridLines +
+      gridLines + tickLines +
       '<line x1="0" y1="' + zeroY.toFixed(1) + '" x2="' + w + '" y2="' + zeroY.toFixed(1) + '" stroke="var(--sub)" stroke-width="1" opacity="0.25" stroke-dasharray="4,3"/>' +
-      fills + lines + labels + '</svg>';
+      fills + lines + pointLabels + labels + '</svg>';
     return { svg: svg, meta: { min: min, rng: rng, padT: padT, plotH: plotH, w: w, h: h, zeroY: zeroY, prevClose: prevClose } };
   }
 
@@ -1739,7 +1783,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=22').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=23').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
     loadIndices();
