@@ -300,8 +300,10 @@
       totalShares += h.shares; totalMV += nav * h.shares; totalCost += cost * h.shares; totalProfit += (nav - cost) * h.shares;
       if (d.chgToday != null) {
         var mv = nav * h.shares;
-        today += mv * (d.chgToday / 100);
-        todayPrev += mv / (1 + d.chgToday / 100);
+        var r = d.chgToday / 100;
+        var prevMv = r === -1 ? mv : mv / (1 + r); // 昨日市值
+        today += prevMv * r;                       // 今日收益 = 昨日市值 × 涨跌幅
+        todayPrev += prevMv;
         hasToday = true;
       }
     });
@@ -325,7 +327,7 @@
     (cards || []).forEach(function (card) {
       var agg = aggregate(card.f, card.hs);
       if (agg.today != null) {
-        profit += agg.today; mv += agg.totalMV; prevMv += agg.totalMV / (1 + agg.todayPct / 100); count++;
+        profit += agg.today; mv += agg.totalMV; prevMv += agg.todayPrev; count++;
       }
     });
     return { profit: profit, mv: mv, prevMv: prevMv, count: count };
@@ -365,6 +367,19 @@
         var prevMv = chg === -100 ? mv : mv / (1 + chg / 100);
         return { time: p.time, mv: mv, prevMv: prevMv, profit: mv - prevMv, pct: prevMv > 0 ? (mv - prevMv) / prevMv * 100 : 0 };
       });
+      // 用 f.estimate 最新数据补齐/替换曲线末尾，确保与首页当前口径一致
+      if (f.estimate && f.estimate.date === todayStr() && Number.isFinite(f.estimate.nav) && Number.isFinite(f.estimate.chg)) {
+        var et = f.estimate.time || nowHM();
+        var lastT = pts.length ? pts[pts.length - 1].time : null;
+        if (!lastT || timeToMin(et) >= timeToMin(lastT)) {
+          pts = pts.filter(function (p) { return p.time !== et; });
+          var nav = f.estimate.nav;
+          var mv = nav * shares;
+          var chg = f.estimate.chg;
+          var prevMv = chg === -100 ? mv : mv / (1 + chg / 100);
+          pts.push({ time: et, mv: mv, prevMv: prevMv, profit: mv - prevMv, pct: prevMv > 0 ? (mv - prevMv) / prevMv * 100 : 0 });
+        }
+      }
       series.push(pts);
     });
     if (!series.length) return [];
@@ -1783,7 +1798,7 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=23').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=24').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
     loadIndices();
