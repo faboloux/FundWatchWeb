@@ -1796,7 +1796,16 @@
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=25').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) {
+      try {
+        var _fwRefreshing = false;
+        // 新版本 Service Worker 接管时自动刷新一次，确保用户落到最新代码（避免旧缓存导致“改了看不到”）
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+          if (_fwRefreshing) return; _fwRefreshing = true; location.reload();
+        });
+        navigator.serviceWorker.register('sw.js?v=26').catch(function () {});
+      } catch (e) {}
+    }
     render();
     refreshAll();
     loadIndices();
