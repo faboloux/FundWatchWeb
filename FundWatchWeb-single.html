@@ -745,9 +745,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       if (d.chgToday != null) {
         var mv = nav * h.shares;
         var r = d.chgToday / 100;
-        var prevMv = r === -1 ? mv : mv / (1 + r); // 昨日市值
-        today += prevMv * r;                       // 今日收益 = 昨日市值 × 涨跌幅
-        todayPrev += prevMv;
+        today += mv * r;                           // 今日收益 = 当前市值 × 涨跌幅
+        todayPrev += mv;                           // 分母用当前市值（MV 加权收益率）
         hasToday = true;
       }
     });
@@ -808,8 +807,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         var nav = Number.isFinite(p.nav) ? p.nav : 0;
         var mv = nav * shares;
         var chg = Number.isFinite(p.chg) ? p.chg : 0;
-        var prevMv = chg === -100 ? mv : mv / (1 + chg / 100);
-        return { time: p.time, mv: mv, prevMv: prevMv, profit: mv - prevMv, pct: prevMv > 0 ? (mv - prevMv) / prevMv * 100 : 0 };
+        var profit = mv * (chg / 100);             // 今日收益 = 当前市值 × 涨跌幅
+        return { time: p.time, mv: mv, prevMv: mv - profit, profit: profit, pct: chg };
       });
       // 用 f.estimate 最新数据补齐/替换曲线末尾，确保与首页当前口径一致
       if (f.estimate && f.estimate.date === todayStr() && Number.isFinite(f.estimate.nav) && Number.isFinite(f.estimate.chg)) {
@@ -820,8 +819,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
           var nav = f.estimate.nav;
           var mv = nav * shares;
           var chg = f.estimate.chg;
-          var prevMv = chg === -100 ? mv : mv / (1 + chg / 100);
-          pts.push({ time: et, mv: mv, prevMv: prevMv, profit: mv - prevMv, pct: prevMv > 0 ? (mv - prevMv) / prevMv * 100 : 0 });
+          var profit = mv * (chg / 100);           // 今日收益 = 当前市值 × 涨跌幅
+          pts.push({ time: et, mv: mv, prevMv: mv - profit, profit: profit, pct: chg });
         }
       }
       series.push(pts);
@@ -831,16 +830,15 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     series.forEach(function (pts) { pts.forEach(function (p) { timeSet[p.time] = true; }); });
     var times = Object.keys(timeSet).sort(function (a, b) { return timeToMin(a) - timeToMin(b); });
     return times.map(function (t) {
-      var tm = timeToMin(t), totalMV = 0, totalPrev = 0;
+      var tm = timeToMin(t), totalMV = 0, totalProfit = 0;
       series.forEach(function (pts) {
         var last = null;
         for (var i = 0; i < pts.length; i++) {
           if (timeToMin(pts[i].time) <= tm) last = pts[i]; else break;
         }
-        if (last) { totalMV += last.mv; totalPrev += last.prevMv; }
+        if (last) { totalMV += last.mv; totalProfit += last.profit; }
       });
-      var profit = totalMV - totalPrev;
-      return { time: t, profit: profit, pct: totalPrev > 0 ? profit / totalPrev * 100 : 0, mv: totalMV, prevMv: totalPrev };
+      return { time: t, profit: totalProfit, pct: totalMV > 0 ? totalProfit / totalMV * 100 : 0, mv: totalMV, prevMv: totalMV - totalProfit };
     });
   }
 
@@ -2242,7 +2240,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       var w = window.matchMedia('(min-width:840px)').matches;
       if (w !== ui.wide) { ui.wide = w; if (ui.view === 'home' || ui.view === 'detail') render(); }
     });
-    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=24').catch(function () {}); } catch (e) {} }
+    if ('serviceWorker' in navigator) { try { navigator.serviceWorker.register('sw.js?v=25').catch(function () {}); } catch (e) {} }
     render();
     refreshAll();
     loadIndices();
