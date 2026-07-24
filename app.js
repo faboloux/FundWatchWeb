@@ -354,11 +354,15 @@
     if (!cards || !cards.length) return [];
     var series = [];
     cards.forEach(function (card) {
-      var f = card.f, hs = card.hs, curve = (f.estimateCurve || []).filter(function (p) { return p && p.time; });
-      if (!curve.length) return;
+      var f = card.f, hs = card.hs;
       var shares = 0;
       (hs || []).forEach(function (h) { if (h && h.shares > 0) shares += h.shares; });
       if (shares <= 0) return;
+      // 统一走 displayOf（与首页 aggregate 同口径）：无论是否有估值曲线，凡有有效持仓与今日涨跌幅都参与聚合
+      var d = displayOf(f);
+      if (d.chgToday == null || !Number.isFinite(d.nav)) return;
+      var et = (f.estimate && f.estimate.time) ? f.estimate.time : nowHM();
+      var curve = (f.estimateCurve || []).filter(function (p) { return p && p.time && p.time !== et; });
       var pts = curve.map(function (p) {
         var nav = Number.isFinite(p.nav) ? p.nav : 0;
         var mv = nav * shares;
@@ -366,16 +370,9 @@
         var profit = mv * (chg / 100);             // 今日收益 = 当前市值 × 涨跌幅
         return { time: p.time, mv: mv, prevMv: mv - profit, profit: profit, pct: chg };
       });
-      // 曲线末点用「与首页汇总完全相同的来源 displayOf(f)」补齐/替换，
-      // 从而保证“截止当前时间点”的末点 == 首页“全部今日收益”，二者口径严格一致（含真实净值/QDII 滞后场景）。
-      var d = displayOf(f);
-      if (pts.length && d.chgToday != null && Number.isFinite(d.nav)) {
-        var et = (f.estimate && f.estimate.time) ? f.estimate.time : nowHM();
-        pts = pts.filter(function (p) { return p.time !== et; });
-        var nav = d.nav, mv = nav * shares, chg = d.chgToday;
-        var profit = mv * (chg / 100);             // 当前市值 × 涨跌幅（与首页 aggregate 同口径）
-        pts.push({ time: et, mv: mv, prevMv: mv - profit, profit: profit, pct: chg });
-      }
+      // 末点（截止当前时间点）一律用 displayOf 当前值，保证 == 首页“全部今日收益”（含真实净值 / QDII 滞后 / 无曲线场景）
+      var mv = d.nav * shares, chg = d.chgToday, profit = mv * (chg / 100);
+      pts.push({ time: et, mv: mv, prevMv: mv - profit, profit: profit, pct: chg });
       series.push(pts);
     });
     if (!series.length) return [];
@@ -1800,7 +1797,7 @@
         navigator.serviceWorker.addEventListener('controllerchange', function () {
           if (_fwRefreshing) return; _fwRefreshing = true; location.reload();
         });
-        navigator.serviceWorker.register('sw.js?v=26').catch(function () {});
+        navigator.serviceWorker.register('sw.js?v=27').catch(function () {});
       } catch (e) {}
     }
     render();
