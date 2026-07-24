@@ -810,18 +810,15 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         var profit = mv * (chg / 100);             // 今日收益 = 当前市值 × 涨跌幅
         return { time: p.time, mv: mv, prevMv: mv - profit, profit: profit, pct: chg };
       });
-      // 用 f.estimate 最新数据补齐/替换曲线末尾，确保与首页当前口径一致
-      if (f.estimate && f.estimate.date === todayStr() && Number.isFinite(f.estimate.nav) && Number.isFinite(f.estimate.chg)) {
-        var et = f.estimate.time || nowHM();
-        var lastT = pts.length ? pts[pts.length - 1].time : null;
-        if (!lastT || timeToMin(et) >= timeToMin(lastT)) {
-          pts = pts.filter(function (p) { return p.time !== et; });
-          var nav = f.estimate.nav;
-          var mv = nav * shares;
-          var chg = f.estimate.chg;
-          var profit = mv * (chg / 100);           // 今日收益 = 当前市值 × 涨跌幅
-          pts.push({ time: et, mv: mv, prevMv: mv - profit, profit: profit, pct: chg });
-        }
+      // 曲线末点用「与首页汇总完全相同的来源 displayOf(f)」补齐/替换，
+      // 从而保证“截止当前时间点”的末点 == 首页“全部今日收益”，二者口径严格一致（含真实净值/QDII 滞后场景）。
+      var d = displayOf(f);
+      if (pts.length && d.chgToday != null && Number.isFinite(d.nav)) {
+        var et = (f.estimate && f.estimate.time) ? f.estimate.time : nowHM();
+        pts = pts.filter(function (p) { return p.time !== et; });
+        var nav = d.nav, mv = nav * shares, chg = d.chgToday;
+        var profit = mv * (chg / 100);             // 当前市值 × 涨跌幅（与首页 aggregate 同口径）
+        pts.push({ time: et, mv: mv, prevMv: mv - profit, profit: profit, pct: chg });
       }
       series.push(pts);
     });
