@@ -736,7 +736,8 @@
       var sb2 = sbMap[vlabel];
       scopeLabel = (ui.filter === '全部' ? '全部今日收益' : ('「' + ui.filter + '」今日收益')) + '（' + vlabel + '）';
       scopeBadge = sb2 ? '<span class="state-badge ' + sb2.c + '">' + sb2.t + '</span>' : '';
-      pc = colorClass(sum.profit);
+      pc = colorClass(sum.profit); ppct = sum.prevMv > 0 ? sum.profit / sum.prevMv * 100 : 0;
+      pctText = '<span class="chg-pill ' + pc + '">' + (sum.profit >= 0 ? '+' : '') + fmt(ppct, 2) + '%</span>';
     } else {
       sum = sumHistory(sc);
       scopeLabel = ui.filter === '全部' ? '全部历史收益' : ('「' + ui.filter + '」历史收益');
@@ -1920,7 +1921,7 @@
         navigator.serviceWorker.addEventListener('controllerchange', function () {
           if (_fwRefreshing) return; _fwRefreshing = true; location.reload();
         });
-        navigator.serviceWorker.register('sw.js?v=29').catch(function () {});
+        navigator.serviceWorker.register('sw.js?v=30').catch(function () {});
       } catch (e) {}
     }
     render();
