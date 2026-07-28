@@ -680,16 +680,31 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
   //  ② 场外基金：新浪当日估值 —— 交易时段=盘中估值；收盘后=15:00 收盘预估
   //  ③ 最新确认净值(非今日，如 QDII 滞后/周末) → 用最新净值的涨跌幅作为“今日收益”口径
   //  ④ 兜底：无净值 → 无法计算
+
+  // 取今日有效估值：优先 f.estimate 单点，回退 f.estimateCurve 末点。
+  // 关键：保证首页/聚合与详情页图表用同源数据，避免“首页0、详情-2.94%”这类分叉。
+  function todayEstimateOf(f) {
+    if (f.estimate && f.estimate.date === todayStr() && Number.isFinite(f.estimate.chg)) return f.estimate;
+    if (f.estimateCurve && f.estimateCurve.length) {
+      var c = f.estimateCurve[f.estimateCurve.length - 1];
+      if (c && Number.isFinite(c.nav) && Number.isFinite(c.chg)) {
+        return { nav: c.nav, chg: c.chg, date: todayStr(), time: c.time || nowHM(), nav2: c.nav2, chg2: c.chg2 };
+      }
+    }
+    return null;
+  }
+
   function displayOf(f) {
     var navUpdated = (f.lastDate === todayStr());
     var trading = marketOpen();
     if (navUpdated) {
       return { nav: f.lastNav, chg: f.lastChg, chgToday: f.lastChg, label: '真实净值 ' + f.lastDate, real: true, estimate: false, live: false, navUpdated: true, latestNav: false };
     }
-    if (f.estimate && f.estimate.date === todayStr()) {
+    var te = todayEstimateOf(f);
+    if (te) {
       return {
-        nav: f.estimate.nav, chg: f.estimate.chg, chgToday: f.estimate.chg,
-        label: trading ? ('盘中估值 ' + f.estimate.time) : '收盘估值(预估) 15:00',
+        nav: te.nav, chg: te.chg, chgToday: te.chg,
+        label: trading ? ('盘中估值 ' + te.time) : '收盘估值(预估) 15:00',
         real: false, estimate: true, live: trading, navUpdated: false, latestNav: false
       };
     }
@@ -2372,13 +2387,14 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         navigator.serviceWorker.addEventListener('controllerchange', function () {
           if (_fwRefreshing) return; _fwRefreshing = true; location.reload();
         });
-        navigator.serviceWorker.register('sw.js?v=30').catch(function () {});
+        navigator.serviceWorker.register('sw.js?v=31').catch(function () {});
       } catch (e) {}
     }
     render();
     refreshAll();
     loadIndices();
     setInterval(loadIndices, 30000); // 指数行情 30s 轮询
+    setInterval(function () { refreshAll(); }, 30000); // 基金估值 30s 自动轮询（实时刷新；refreshAll 内置 refreshing 防重入）
   }
 
   if (document.readyState !== 'loading') init();
