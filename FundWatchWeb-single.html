@@ -282,6 +282,13 @@ body{
 .kv .k{color:var(--sub);font-weight:500}
 .spark{width:100%;height:170px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
   box-shadow:var(--shadow-card);margin:14px 0;padding:12px;display:block}
+/* 详情页交互式图表（与总收益页同款：高/低标注 + 拖动 + 数据框不超屏） */
+.detail-chart{margin:14px 0}
+.detail-chart .chart-big{padding:16px 16px;margin-bottom:12px}
+.detail-chart .chart-big-num{font-size:30px;margin-bottom:10px}
+.detail-chart .chart-big-row{font-size:12px;gap:10px}
+.detail-chart .chart-wrap{height:210px}
+.detail-chart .chart-note{margin-top:10px}
 .hold-edit{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-card);padding:15px;margin-top:11px}
 .hold-edit input{width:100%;border:1px solid var(--line);border-radius:11px;padding:11px 13px;font-size:15px;margin-top:7px;background:var(--card);color:var(--txt);font-variant-numeric:tabular-nums;transition:border-color .14s ease}
 .hold-edit input:focus{outline:none;border-color:var(--brand)}
@@ -475,9 +482,10 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     searchKw: '', searchResults: [], searchTargets: {}, searching: false,
     wide: false, lastUpd: 0, refreshing: false,
     homeSort: 'today_desc', portSort: 'hold_desc', compact: false,
-    indexSlide: 0
+    indexSlide: 0, fundChartMode: null
   };
   var tickerTimer = null;
+  var gFundChart = null; // 当前详情页图表状态（供拖动绑定/切换模式使用）
   // 各页允许的排序项：自选=今日预估/今日预估率；收益=历史收益/历史收益率（两页独立，不联动）
   var HOME_SORTS = ['today_desc', 'today_asc', 'todayrate_desc', 'todayrate_asc'];
   var PORT_SORTS = ['hold_desc', 'hold_asc', 'holdrate_desc', 'holdrate_asc'];
@@ -836,6 +844,96 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     });
   }
 
+  // ---------------- 单基金详情页图表 ----------------
+  function totalSharesOf(f) {
+    var s = 0; holdingsOf(f).forEach(function (h) { if (h && h.shares > 0) s += h.shares; }); return s;
+  }
+  // 单基金今日分时估值曲线（收益/收益率），无持仓时 profit 记 0（仅收益率有意义）
+  function fundTrendData(f) {
+    var d = displayOf(f);
+    if (d.chgToday == null || !Number.isFinite(d.nav)) return null;
+    var curve = (f.estimateCurve || []).filter(function (p) { return p && p.time; });
+    if (curve.length < 1) return null;
+    var shares = totalSharesOf(f);
+    var et = (f.estimate && f.estimate.time) ? f.estimate.time : nowHM();
+    var pts = curve.filter(function (p) { return p.time !== et; }).map(function (p) {
+      var nv = Number.isFinite(p.nav) ? p.nav : 0;
+      var chg = Number.isFinite(p.chg) ? p.chg : 0;
+      var mv = nv * (shares > 0 ? shares : 1);
+      var profit = shares > 0 ? mv * (chg / 100) : 0;
+      return { time: p.time, mv: mv, prevMv: mv - profit, profit: profit, pct: chg };
+    });
+    var mv = d.nav * (shares > 0 ? shares : 1), chg = d.chgToday, profit = shares > 0 ? mv * (chg / 100) : 0;
+    pts.push({ time: et, mv: mv, prevMv: mv - profit, profit: profit, pct: chg });
+    return pts;
+  }
+  // 历史净值走势 → 指数式分时结构（时间按索引均摊到 9:30–15:00）
+  function fundHistoryData(f) {
+    var hn = f.history || [];
+    if (hn.length < 2) return null;
+    var minData = hn.map(function (p, i) {
+      var frac = hn.length > 1 ? i / (hn.length - 1) : 0;
+      var m = 570 + frac * 270, hh = Math.floor(m / 60), mm = Math.round(m - hh * 60);
+      var time = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+      return { time: time, price: Number.isFinite(p.nav) ? p.nav : 0, vol: 0, amt: 0 };
+    });
+    return { minData: minData, prevClose: hn[0].nav };
+  }
+  // 构建详情页图表所需的全部片段（与“总收益查看页面”同款：高/低标注 + 拖动 + 数据框不超屏）
+  function renderFundChart(f, mode) {
+    var d = displayOf(f);
+    var hasHold = totalSharesOf(f) > 0;
+    var defMode = mode || (hasHold ? 'profit' : 'rate');
+    var sb = stateBadge(d);
+    var sb2 = sb ? { t: sb.t, c: sb.c } : { t: '预估', c: 'est' };
+    var todayData = fundTrendData(f);
+    if (todayData && todayData.length >= 2) {
+      var chart = renderTrendChart(todayData, defMode, 360, 190);
+      if (chart.meta) {
+        var last = todayData[todayData.length - 1];
+        var numVal = defMode === 'profit' ? last.profit : last.pct;
+        var numCls = numVal >= 0 ? 'up' : 'down';
+        var numTxt = defMode === 'profit'
+          ? (numVal >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(numVal), 2)
+          : (numVal >= 0 ? '+' : '') + fmt(numVal, 2) + '%';
+        var subProfitTxt = (last.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(last.profit), 2);
+        var subRateTxt = (last.pct >= 0 ? '+' : '') + fmt(last.pct, 2) + '%';
+        var label = defMode === 'profit' ? '当前预估收益' : '当前预估收益率';
+        var rowHtml = '<span class="cb-item"><b>' + subProfitTxt + '</b>收益</span>' +
+          '<span class="cb-item"><b>' + subRateTxt + '</b>收益率</span>' +
+          '<span class="state-badge ' + sb2.c + '">' + sb2.t + '</span>';
+        var dragHTML = '<div class="cc"><div class="cc-line"></div><div class="cc-tip"></div></div>';
+        return {
+          type: 'trend', data: todayData, meta: chart.meta, mode: defMode, sb2: sb2,
+          numCls: numCls, numTxt: numTxt, label: label, rowHtml: rowHtml,
+          note: '今日分时估值（新浪）· 横轴可拖动查看任意时刻', svg: chart.svg, dragHTML: dragHTML,
+          lastView: { numCls: numCls, numTxt: numTxt, subProfitTxt: subProfitTxt, subRateTxt: subRateTxt, sb2: sb2 }
+        };
+      }
+    }
+    var hist = fundHistoryData(f);
+    if (hist && hist.minData.length >= 2) {
+      var chart2 = renderIndexChart(hist.minData, hist.prevClose, 360, 190);
+      if (chart2.meta) {
+        var last2 = hist.minData[hist.minData.length - 1];
+        var chg2 = last2.price - hist.prevClose;
+        var pct2 = hist.prevClose ? chg2 / hist.prevClose * 100 : 0;
+        var cls2 = chg2 >= 0 ? 'up' : 'down';
+        var numTxt2 = fmt(last2.price, 4);
+        var rowHtml2 = '<span class="cb-item"><b>' + (chg2 >= 0 ? '+' : '−') + fmt(Math.abs(chg2), 4) + '</b>涨跌</span>' +
+          '<span class="cb-item"><b>' + (pct2 >= 0 ? '+' : '') + fmt(pct2, 2) + '%</b>涨跌幅</span>';
+        var dragHTML2 = '<div class="cc"><div class="cc-line"></div><div class="cc-tip"></div></div>';
+        return {
+          type: 'index', data: hist.minData, meta: chart2.meta, idxChg: chg2, sb2: sb2,
+          numCls: cls2, numTxt: numTxt2, label: '当前净值', rowHtml: rowHtml2,
+          note: '历史净值走势（近60个交易日）· 横轴可拖动查看任意时刻', svg: chart2.svg, dragHTML: dragHTML2,
+          lastView: { numCls: cls2, numTxt: numTxt2, rowHtml: rowHtml2 }
+        };
+      }
+    }
+    return { empty: '暂无可用曲线数据' };
+  }
+
   // ---------------- 刷新 ----------------
   function refreshOne(code) {
     var f = state.funds[code]; if (!f) return Promise.resolve();
@@ -1119,6 +1217,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     view.innerHTML = html;
     startIndexTicker();
     bindIndexSwipe();
+    bindFundChartDrag();
   }
 
   function updateIndexCards() {
@@ -1228,9 +1327,9 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     var color = d.chg >= 0 ? '#EE2B3B' : '#0CA678';
     var nav = d.nav || 0;
     var groupsOpts = state.groups.map(function (g) { return '<option value="' + esc(g) + '" ' + ((f.group || '') === g ? 'selected' : '') + '>' + esc(g) + '</option>'; }).join('');
-    var hasCurve = f.estimateCurve && f.estimateCurve.length >= 2;
-    var spark = sparkSVG(hasCurve ? f.estimateCurve : f.history, 300, 140, color, hasCurve ? { timeField: 'time' } : null);
-    var curveLabel = hasCurve ? (marketOpen() ? '今日盘中估值曲线（新浪）' : '今日估值曲线（新浪·至15:00）') : '历史净值走势';
+    var fc = renderFundChart(f, ui.fundChartMode);
+    gFundChart = fc;
+    var curveLabel = (fc.type === 'index') ? '历史净值走势' : (marketOpen() ? '今日盘中估值曲线（新浪）' : '今日估值曲线（新浪·至15:00）');
 
     var html = '<div class="detail-wrap">';
     html += '<div class="detail-head"><div><div style="font-weight:700;font-size:16px">' + esc(f.name || f.code) + '</div><div style="font-size:12px;color:var(--sub)">' + f.code + (f.type ? (' · ' + esc(f.type)) : '') + '</div></div>';
@@ -1247,7 +1346,25 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
       }
     }
     html += '<div class="curve-label">' + curveLabel + '</div>';
-    html += spark;
+    html += '<div class="detail-chart" id="detailChart">';
+    if (fc.empty) {
+      html += '<div class="trend-empty" style="height:160px">' + fc.empty + '</div>';
+    } else {
+      html += '<div class="chart-big ' + fc.numCls + '">' +
+        '<div class="chart-big-label">' + fc.label + '</div>' +
+        '<div class="chart-big-num">' + fc.numTxt + '</div>' +
+        '<div class="chart-big-row">' + fc.rowHtml + '</div>' +
+        '</div>';
+      if (fc.type === 'trend') {
+        html += '<div class="chart-toggle">' +
+          '<button class="tog ' + (fc.mode === 'profit' ? 'on' : '') + '" data-act="fModeProfit">收益</button>' +
+          '<button class="tog ' + (fc.mode === 'rate' ? 'on' : '') + '" data-act="fModeRate">收益率</button>' +
+          '</div>';
+      }
+      html += '<div class="chart-wrap" id="fWrap">' + fc.svg + fc.dragHTML + '</div>';
+      html += '<div class="chart-note">' + fc.note + '</div>';
+    }
+    html += '</div>';
     html += '<div>';
     html += kv('净值日期', (f.lastDate || '—') + (f.lastDate === todayStr() ? '（今日·真实）' : ''));
     html += '</div>';
@@ -1289,7 +1406,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 
   function kv(k, v) { return '<div class="kv"><span class="k">' + k + '</span><span>' + v + '</span></div>'; }
 
-  function renderDetail() { view.innerHTML = detailInner(ui.selectedCode); }
+  function renderDetail() { view.innerHTML = detailInner(ui.selectedCode); bindFundChartDrag(); }
 
   // ---------------- 渲染：收益 ----------------
   function renderPortfolio() {
@@ -1670,17 +1787,17 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     if (meta && data && data.length) bindChartDrag(data, meta, mode, scope, sb2, { numCls: numCls, numTxt: numTxt, subProfitTxt: subProfitTxt, subRateTxt: subRateTxt, sb2: sb2 });
   }
 
-  // 横轴拖动：显示任意时刻的盈亏值 / 收益率
-  function bindChartDrag(data, meta, mode, scope, sb2, lastView) {
-    var root = $('#modalRoot');
-    var wrap = root.querySelector('#cWrap');
-    var cc = root.querySelector('#cc');
-    var ccLine = root.querySelector('#ccLine');
-    var ccTip = root.querySelector('#ccTip');
+  // 横轴拖动：显示任意时刻的盈亏值 / 收益率（container 可指定作用域，默认模态根）
+  function bindChartDrag(data, meta, mode, scope, sb2, lastView, container) {
+    var root = container || $('#modalRoot');
+    var wrap = root.querySelector('.chart-wrap');
+    var cc = root.querySelector('.cc');
+    var ccLine = root.querySelector('.cc-line');
+    var ccTip = root.querySelector('.cc-tip');
     var bigEl = root.querySelector('.chart-big');
-    var bigLabel = root.querySelector('#cBigLabel');
-    var bigNum = root.querySelector('#cBigNum');
-    var bigRow = root.querySelector('#cBigRow');
+    var bigLabel = root.querySelector('.chart-big-label');
+    var bigNum = root.querySelector('.chart-big-num');
+    var bigRow = root.querySelector('.chart-big-row');
     if (!wrap) return;
     var ts = data.map(function (d) { return timeToMin(d.time); });
     function xToMinFromX(x, w) {
@@ -1738,7 +1855,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         '<div class="cc-row"><span>收益</span><b>' + (r.profit >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(r.profit), 2) + '</b></div>' +
         '<div class="cc-row"><span>收益率</span><b>' + (r.pct >= 0 ? '+' : '') + fmt(r.pct, 2) + '%</b></div>';
       var nv = r.v;
-      bigEl.className = 'chart-big ' + (up ? 'up' : 'down');
+      bigEl.className = 'chart-big ' + (r.v >= 0 ? 'up' : 'down');
       bigLabel.textContent = mode === 'profit' ? '该时刻预估收益' : '该时刻预估收益率';
       bigNum.textContent = mode === 'profit'
         ? (nv >= 0 ? '+' : '−') + '¥' + fmt(Math.abs(nv), 2)
@@ -1906,12 +2023,12 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     else { loadIndexMinute(idx, renderIdx); }
   }
 
-  function bindIndexDrag(minData, meta, idx) {
-    var root = $('#modalRoot');
-    var wrap = root.querySelector('#cWrap');
-    var cc = root.querySelector('#cc');
-    var ccLine = root.querySelector('#ccLine');
-    var ccTip = root.querySelector('#ccTip');
+  function bindIndexDrag(minData, meta, idx, container) {
+    var root = container || $('#modalRoot');
+    var wrap = root.querySelector('.chart-wrap');
+    var cc = root.querySelector('.cc');
+    var ccLine = root.querySelector('.cc-line');
+    var ccTip = root.querySelector('.cc-tip');
     var bigEl = root.querySelector('.chart-big');
     var bigNum = root.querySelector('.chart-big-num');
     var bigRow = root.querySelector('.chart-big-row');
@@ -2003,6 +2120,18 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
     wrap.addEventListener('pointerup', end);
     wrap.addEventListener('pointercancel', end);
     wrap.addEventListener('pointerleave', function (ev) { if (dragging) { try { wrap.releasePointerCapture(ev.pointerId); } catch (e) {} } });
+  }
+
+  // 详情页图表拖动绑定（按容器作用域，避免与模态图表冲突）
+  function bindFundChartDrag() {
+    var wrap = $('#fWrap'); if (!wrap) return;
+    var fc = gFundChart; if (!fc || !fc.meta) return;
+    var container = wrap.parentElement; // .detail-chart
+    if (fc.type === 'trend') {
+      bindChartDrag(fc.data, fc.meta, fc.mode, 'fund', fc.sb2, fc.lastView, container);
+    } else {
+      bindIndexDrag(fc.data, fc.meta, { chg: fc.idxChg || 0 }, container);
+    }
   }
 
   function openSortSheet() {
@@ -2186,6 +2315,8 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         case 'toggleCompactSheet': ui.compact = !ui.compact; save(); render(); openSortSheet(); break;
         case 'closeSheet': if ($('#modalRoot')) $('#modalRoot').innerHTML = ''; break;
         case 'openTodayChart': openTodayChart(); break;
+        case 'fModeProfit': ui.fundChartMode = 'profit'; render(); break;
+        case 'fModeRate': ui.fundChartMode = 'rate'; render(); break;
         case 'openIndex': openIndexDetail(code); break;
         case 'exportExcel': exportExcel(); break;
         case 'exportTemplate': exportTemplate(); break;
@@ -2241,7 +2372,7 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
         navigator.serviceWorker.addEventListener('controllerchange', function () {
           if (_fwRefreshing) return; _fwRefreshing = true; location.reload();
         });
-        navigator.serviceWorker.register('sw.js?v=27').catch(function () {});
+        navigator.serviceWorker.register('sw.js?v=28').catch(function () {});
       } catch (e) {}
     }
     render();
