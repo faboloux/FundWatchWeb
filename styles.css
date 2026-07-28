@@ -274,6 +274,13 @@ body{
 .kv .k{color:var(--sub);font-weight:500}
 .spark{width:100%;height:170px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
   box-shadow:var(--shadow-card);margin:14px 0;padding:12px;display:block}
+/* 详情页交互式图表（与总收益页同款：高/低标注 + 拖动 + 数据框不超屏） */
+.detail-chart{margin:14px 0}
+.detail-chart .chart-big{padding:16px 16px;margin-bottom:12px}
+.detail-chart .chart-big-num{font-size:30px;margin-bottom:10px}
+.detail-chart .chart-big-row{font-size:12px;gap:10px}
+.detail-chart .chart-wrap{height:210px}
+.detail-chart .chart-note{margin-top:10px}
 .hold-edit{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-card);padding:15px;margin-top:11px}
 .hold-edit input{width:100%;border:1px solid var(--line);border-radius:11px;padding:11px 13px;font-size:15px;margin-top:7px;background:var(--card);color:var(--txt);font-variant-numeric:tabular-nums;transition:border-color .14s ease}
 .hold-edit input:focus{outline:none;border-color:var(--brand)}
