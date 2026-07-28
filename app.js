@@ -325,7 +325,7 @@
     return {
       totalShares: totalShares, totalMV: totalMV, totalCost: totalCost, totalProfit: totalProfit,
       totalProfitPct: totalCost > 0 ? totalProfit / totalCost * 100 : 0,
-      today: hasToday ? today : null, todayPct: (hasToday && todayPrev > 0) ? today / todayPrev * 100 : 0
+      today: hasToday ? today : null, todayPrev: todayPrev, todayPct: (hasToday && todayPrev > 0) ? today / todayPrev * 100 : 0
     };
   }
   // 单 holding 今日收益（份额 × 当前市值 × 今日涨跌幅%）
@@ -1936,7 +1936,7 @@
         navigator.serviceWorker.addEventListener('controllerchange', function () {
           if (_fwRefreshing) return; _fwRefreshing = true; location.reload();
         });
-        navigator.serviceWorker.register('sw.js?v=31').catch(function () {});
+        navigator.serviceWorker.register('sw.js?v=32').catch(function () {});
       } catch (e) {}
     }
     render();
